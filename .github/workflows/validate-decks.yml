@@ -1,0 +1,29 @@
+name: Validate decks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "decks/**"
+      - "src/deck.ts"
+      - "scripts/validate-decks.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate decks
+        run: npm run validate:decks
