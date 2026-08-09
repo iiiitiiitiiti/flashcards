@@ -1,3 +1,5 @@
+import { validateDeck, type Deck } from "./deck";
+
 const API_ROOT = "https://api.github.com";
 const RAW_ROOT = "https://raw.githubusercontent.com";
 export const OWNER = "iiiitiiitiiti";
@@ -117,4 +119,90 @@ export async function fetchDeckRaw(commitSha: string, deckId: string): Promise<s
     throw new Error(`デッキ「${deckId}」を取得できませんでした (${response.status})`);
   }
   return response.text();
+}
+
+interface ContentsResponse {
+  content?: string;
+  encoding?: string;
+  sha?: string;
+  message?: string;
+}
+
+const MAX_WRITE_ATTEMPTS = 3;
+
+// 書き込みは直列化して自分自身との競合を避ける
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+/** Contents API から最新のデッキ本文と blob SHA を取得する（書き込み用） */
+async function getDeckContents(deckId: string, token: string): Promise<{ raw: string; sha: string }> {
+  const response = await apiRequest<ContentsResponse>(
+    `/repos/${OWNER}/${REPOSITORY}/contents/decks/${encodeURIComponent(deckId)}.json?ref=${BRANCH}`,
+    token,
+  );
+  if (response.status !== 200 || !response.data.content || response.data.encoding !== "base64" || !response.data.sha) {
+    throw new Error(`デッキ「${deckId}」の最新版を取得できませんでした (${response.status})`);
+  }
+  return { raw: decodeBase64Utf8(response.data.content), sha: response.data.sha };
+}
+
+/**
+ * デッキを更新する。最新版へ mutate を適用して PUT し、409 競合時は
+ * 再取得 → 再適用 → 再 PUT を最大 3 回まで繰り返す。
+ * mutate は「1 操作分の変更」を最新デッキへ適用する冪等な純関数であること。
+ */
+export function writeDeck(deckId: string, token: string, message: string, mutate: (deck: Deck) => Deck): Promise<Deck> {
+  const operation = writeQueue.then(() => writeDeckWithRetry(deckId, token, message, mutate));
+  writeQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function writeDeckWithRetry(deckId: string, token: string, message: string, mutate: (deck: Deck) => Deck): Promise<Deck> {
+  for (let attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt += 1) {
+    const latest = await getDeckContents(deckId, token);
+    let parsed: Deck;
+    try {
+      parsed = validateDeck(JSON.parse(latest.raw), deckId);
+    } catch {
+      throw new Error(`デッキ「${deckId}」の最新版が壊れています。リポジトリ側を先に修正してください。`);
+    }
+    // 変更後も規約に適合していることを保証してから書き込む
+    const next = validateDeck(mutate(parsed), deckId);
+    const response = await apiRequest<ContentsResponse>(
+      `/repos/${OWNER}/${REPOSITORY}/contents/decks/${encodeURIComponent(deckId)}.json`,
+      token,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          message,
+          content: encodeBase64Utf8(`${JSON.stringify(next, null, 2)}\n`),
+          sha: latest.sha,
+          branch: BRANCH,
+        }),
+      },
+    );
+    if (response.status === 200 || response.status === 201) return next;
+    if (response.status === 401) throw new Error("トークンが無効です (401)。設定画面で確認してください。");
+    if (response.status === 403) throw new Error("書き込みが拒否されました (403)。トークンの権限を確認してください。");
+    if (response.status !== 409) {
+      throw new Error(`デッキの保存に失敗しました (${response.status}): ${response.data.message ?? "不明なエラー"}`);
+    }
+  }
+  throw new Error("他の更新と競合し続けたため保存を中止しました。時間をおいて再試行してください。");
+}
+
+export function decodeBase64Utf8(value: string): string {
+  const normalized = value.replace(/\s/g, "");
+  const binary = atob(normalized);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+export function encodeBase64Utf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
 }
