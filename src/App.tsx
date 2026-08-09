@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { readProgress } from "./db";
+import { DeckDetailView } from "./DeckDetailView";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue } from "./srs";
 import { loadToken } from "./storage";
@@ -12,7 +13,11 @@ interface DeckStats {
   fresh: number;
 }
 
-type View = { type: "home" } | { type: "study"; deckId: string; progress: ProgressRecord[] } | { type: "settings" };
+type View =
+  | { type: "home" }
+  | { type: "study"; deckId: string; progress: ProgressRecord[] }
+  | { type: "deck"; deckId: string }
+  | { type: "settings" };
 
 function formatTimestamp(value: number): string {
   const date = new Date(value);
@@ -96,6 +101,21 @@ export function App() {
     );
   }
 
+  if (view.type === "deck" && snapshot) {
+    const entry = snapshot.decks.find((candidate) => candidate.deckId === view.deckId);
+    if (entry) {
+      return (
+        <main className="app">
+          <DeckDetailView
+            deck={entry.deck}
+            onClose={() => setView({ type: "home" })}
+            onDeckUpdated={() => void refresh()}
+          />
+        </main>
+      );
+    }
+  }
+
   if (view.type === "study" && snapshot) {
     const entry = snapshot.decks.find((candidate) => candidate.deckId === view.deckId);
     if (entry) {
@@ -138,14 +158,14 @@ export function App() {
               const studyCount = (deckStats?.due ?? 0) + (deckStats?.fresh ?? 0);
               return (
                 <li key={entry.deckId} className="deck-card">
-                  <div className="deck-card-body">
+                  <button type="button" className="deck-card-body" onClick={() => setView({ type: "deck", deckId: entry.deckId })}>
                     <strong>{entry.deck.name}</strong>
                     {entry.deck.description && <span className="muted">{entry.deck.description}</span>}
                     <span className="muted">
                       全 {entry.deck.cards.length} 枚
                       {deckStats && ` ・ 期限切れ ${deckStats.due} / 新規 ${deckStats.fresh}`}
                     </span>
-                  </div>
+                  </button>
                   <button type="button" className="primary" disabled={studyCount === 0} onClick={() => void startStudy(entry.deckId)}>
                     {studyCount === 0 ? "完了" : "学習する"}
                   </button>
