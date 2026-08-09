@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+import type { Deck } from "../src/deck";
+import { buildStudyQueue, dayKey, NEW_CARDS_PER_DAY, rate, validateProgressDTO } from "../src/srs";
+import type { ProgressDTO, ProgressRecord } from "../src/types";
+
+const NOW = new Date("2026-08-09T03:00:00Z");
+
+function record(cardId: string, overrides: Partial<ProgressRecord> = {}, dto: Partial<ProgressDTO> = {}): ProgressRecord {
+  return {
+    deckId: "deck",
+    cardId,
+    progress: { ...rate(null, 3, new Date("2026-08-01T03:00:00Z")), ...dto },
+    introducedDayKey: "2026-08-01",
+    updatedAt: Date.now(),
+    ...overrides,
+  };
+}
+
+describe("rate / ProgressDTO", () => {
+  it("新規カードの評価で due が前進し reps が増える", () => {
+    const progress = rate(null, 3, NOW);
+    expect(progress.formatVersion).toBe(1);
+    expect(progress.reps).toBe(1);
+    expect(progress.due).toBeGreaterThan(NOW.getTime());
+    expect(progress.lastReview).toBe(NOW.getTime());
+  });
+
+  it("「簡単」は「もう一度」より due が遠い", () => {
+    const again = rate(null, 1, NOW);
+    const easy = rate(null, 4, NOW);
+    expect(easy.due).toBeGreaterThan(again.due);
+  });
+
+  it("評価を重ねても DTO が有限数値のまま保たれる（golden roundtrip）", () => {
+    let progress: ProgressDTO | null = null;
+    const ratings = [3, 1, 3, 4, 2, 3] as const;
+    let clock = NOW.getTime();
+    for (const rating of ratings) {
+      progress = rate(progress, rating, new Date(clock));
+      clock += 24 * 60 * 60 * 1000;
+    }
+    const validated = validateProgressDTO(JSON.parse(JSON.stringify(progress)));
+    expect(validated).toEqual(progress);
+    // 再度評価しても壊れない = fromDTO でスケジューラに戻せている
+    expect(() => rate(validated, 3, new Date(clock))).not.toThrow();
+  });
+
+  it("validateProgressDTO が破損データを拒否する", () => {
+    const valid = rate(null, 3, NOW);
+    expect(() => validateProgressDTO({ ...valid, due: "2026-08-09" })).toThrow("due");
+    expect(() => validateProgressDTO({ ...valid, stability: Number.NaN })).toThrow("stability");
+    expect(() => validateProgressDTO({ ...valid, formatVersion: 2 })).toThrow("formatVersion");
+    expect(() => validateProgressDTO({ ...valid, state: 9 })).toThrow("state");
+    expect(() => validateProgressDTO(null)).toThrow("オブジェクト");
+  });
+});
+
+describe("dayKey（Asia/Tokyo 固定）", () => {
+  it("JST の日付跨ぎを正しく扱う", () => {
+    expect(dayKey(new Date("2026-08-09T14:59:00Z"))).toBe("2026-08-09");
+    expect(dayKey(new Date("2026-08-09T15:00:00Z"))).toBe("2026-08-10");
+  });
+});
+
+describe("buildStudyQueue", () => {
+  function deck(cardIds: string[]): Deck {
+    return {
+      schemaVersion: 1,
+      id: "deck",
+      name: "テスト",
+      cards: cardIds.map((id) => ({ id, front: `Q${id}`, back: `A${id}` })),
+    };
+  }
+
+  it("期限切れカードを due 昇順で並べる", () => {
+    const records = [
+      record("a", {}, { due: NOW.getTime() - 1000 }),
+      record("b", {}, { due: NOW.getTime() - 5000 }),
+      record("c", {}, { due: NOW.getTime() + 60_000 }),
+    ];
+    const queue = buildStudyQueue(deck(["a", "b", "c"]), records, NOW);
+    expect(queue.due.map((card) => card.id)).toEqual(["b", "a"]);
+  });
+
+  it("進捗のないカードを新規としてデッキ順に返し、日次上限を守る", () => {
+    const ids = Array.from({ length: 15 }, (_, i) => `c${String(i).padStart(2, "0")}`);
+    const queue = buildStudyQueue(deck(ids), [], NOW);
+    expect(queue.fresh).toHaveLength(NEW_CARDS_PER_DAY);
+    expect(queue.fresh[0].id).toBe("c00");
+    expect(queue.freshHeldBack).toBe(5);
+  });
+
+  it("今日すでに導入した枚数だけ新規上限を減らす", () => {
+    const today = dayKey(NOW);
+    const introduced = [record("a", { introducedDayKey: today }), record("b", { introducedDayKey: today })];
+    const queue = buildStudyQueue(deck(["a", "b", "x", "y", "z"]), introduced, NOW);
+    expect(queue.fresh.length).toBeLessThanOrEqual(NEW_CARDS_PER_DAY - 2);
+    expect(queue.fresh.map((card) => card.id)).toEqual(["x", "y", "z"]);
+  });
+
+  it("上限到達後は新規を出さない", () => {
+    const today = dayKey(NOW);
+    const introduced = Array.from({ length: NEW_CARDS_PER_DAY }, (_, i) => record(`done${i}`, { introducedDayKey: today }));
+    const queue = buildStudyQueue(deck(["new1", "new2"]), introduced, NOW);
+    expect(queue.fresh).toHaveLength(0);
+    expect(queue.freshHeldBack).toBe(2);
+  });
+
+  it("デッキから削除されたカードの孤児進捗を無視する", () => {
+    const records = [record("deleted", {}, { due: NOW.getTime() - 1000 }), record("a", {}, { due: NOW.getTime() - 1000 })];
+    const queue = buildStudyQueue(deck(["a"]), records, NOW);
+    expect(queue.due.map((card) => card.id)).toEqual(["a"]);
+  });
+
+  it("空デッキで空のキューを返す", () => {
+    const queue = buildStudyQueue(deck([]), [], NOW);
+    expect(queue.due).toHaveLength(0);
+    expect(queue.fresh).toHaveLength(0);
+    expect(queue.freshHeldBack).toBe(0);
+  });
+});
