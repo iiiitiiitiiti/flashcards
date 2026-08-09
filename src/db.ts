@@ -89,3 +89,12 @@ export async function deleteProgress(deckId: string, cardId: string): Promise<vo
   const db = await getDb();
   await db.delete("cardProgress", [deckId, cardId]);
 }
+
+export async function deleteProgressByKeys(keys: [string, string][]): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("cardProgress", "readwrite");
+  for (const key of keys) {
+    await tx.store.delete(key);
+  }
+  await tx.done;
+}
