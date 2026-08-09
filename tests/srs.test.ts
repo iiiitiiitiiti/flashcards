@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Deck } from "../src/deck";
-import { buildStudyQueue, dayKey, NEW_CARDS_PER_DAY, rate, validateProgressDTO } from "../src/srs";
+import { buildStudyQueue, dayKey, NEW_CARDS_PER_DAY, previewIntervals, rate, validateProgressDTO } from "../src/srs";
 import type { ProgressDTO, ProgressRecord } from "../src/types";
 
 const NOW = new Date("2026-08-09T03:00:00Z");
@@ -52,6 +52,25 @@ describe("rate / ProgressDTO", () => {
     expect(() => validateProgressDTO({ ...valid, formatVersion: 2 })).toThrow("formatVersion");
     expect(() => validateProgressDTO({ ...valid, state: 9 })).toThrow("state");
     expect(() => validateProgressDTO(null)).toThrow("オブジェクト");
+  });
+});
+
+describe("previewIntervals", () => {
+  it("4評価すべての目安を返し、簡単ほど間隔が長い", () => {
+    const preview = previewIntervals(null, NOW);
+    expect(Object.keys(preview)).toHaveLength(4);
+    for (const rating of [1, 2, 3, 4] as const) {
+      expect(preview[rating]).toMatch(/^[\d.]+(分|時間|日|か月|年)$/);
+    }
+    // 評価適用後の実際の due とプレビューの単位系が一致することの緩い確認
+    expect(rate(null, 4, NOW).due).toBeGreaterThan(rate(null, 1, NOW).due);
+  });
+
+  it("復習を重ねたカードでは日単位以上の間隔になる", () => {
+    let progress = rate(null, 3, new Date("2026-07-01T03:00:00Z"));
+    progress = rate(progress, 3, new Date("2026-07-05T03:00:00Z"));
+    const preview = previewIntervals(progress, NOW);
+    expect(preview[3]).toMatch(/(日|か月|年)$/);
   });
 });
 

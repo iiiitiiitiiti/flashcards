@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
-import { buildStudyQueue, dayKey, rate } from "./srs";
+import { buildStudyQueue, dayKey, previewIntervals, rate } from "./srs";
 import type { ProgressRecord, ReviewRating } from "./types";
 
 interface StudyViewProps {
@@ -41,6 +41,12 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
   const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
 
   const current = queue[0];
+  const progressPercent = reviewedCount + queue.length === 0 ? 100 : Math.round((reviewedCount / (reviewedCount + queue.length)) * 100);
+
+  const intervals = useMemo(
+    () => (current && revealed ? previewIntervals(progressRef.current.get(current.card.id)?.progress ?? null, new Date()) : null),
+    [current, revealed],
+  );
 
   async function handleRate(rating: ReviewRating) {
     if (!current || saving) return;
@@ -80,61 +86,91 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
     setSaving(false);
   }
 
+  const header = (
+    <header className="study-header">
+      <div className="study-header-row">
+        <h1>{deck.name}</h1>
+        <button type="button" onClick={onClose}>{current ? "中断" : "閉じる"}</button>
+      </div>
+      <div
+        className="progress-track"
+        role="progressbar"
+        aria-valuenow={progressPercent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="このセッションの進み具合"
+      >
+        <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+      </div>
+    </header>
+  );
+
   if (!current) {
     return (
       <section className="study">
-        <header className="app-header">
-          <h1>{deck.name}</h1>
-        </header>
-        <div className="study-summary">
-          {initialQueue.length === 0 ? (
-            <p>今日学習するカードはありません。</p>
-          ) : (
-            <p>おつかれさまでした。{reviewedCount} 回学習しました。</p>
-          )}
-          <button type="button" onClick={onClose}>ホームへ戻る</button>
+        {header}
+        <div className="study-scroll">
+          <div className="study-card study-summary-card">
+            {initialQueue.length === 0 ? (
+              <>
+                <p className="summary-emoji" aria-hidden="true">🎉</p>
+                <p className="summary-title">今日学習するカードはありません</p>
+              </>
+            ) : (
+              <>
+                <p className="summary-emoji" aria-hidden="true">🎉</p>
+                <p className="summary-title">おつかれさまでした</p>
+                <p className="muted">{reviewedCount} 回学習しました</p>
+              </>
+            )}
+          </div>
         </div>
+        <footer className="study-actions">
+          <button type="button" className="primary reveal-button" onClick={onClose}>ホームへ戻る</button>
+        </footer>
       </section>
     );
   }
 
   return (
     <section className="study">
-      <header className="app-header">
-        <h1>{deck.name}</h1>
-        <button type="button" onClick={onClose}>中断</button>
-      </header>
-      <p className="muted">残り {queue.length} 枚{current.isNew ? "・新規カード" : ""}</p>
-      {error && <p className="notice warning">{error}</p>}
-      <div
-        className={`study-card${revealed ? " revealed" : ""}`}
-        role="button"
-        tabIndex={0}
-        onClick={() => setRevealed(true)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") setRevealed(true);
-        }}
-      >
-        <div className="study-front">{current.card.front}</div>
-        {revealed ? (
-          <>
-            <hr />
-            <div className="study-back">{current.card.back}</div>
-            {current.card.note && <div className="study-note muted">{current.card.note}</div>}
-          </>
-        ) : (
-          <div className="muted study-hint">タップで答えを表示</div>
-        )}
-      </div>
-      {revealed && (
-        <div className="rating-buttons">
-          {RATING_LABELS.map(({ rating, label, className }) => (
-            <button key={rating} type="button" className={className} disabled={saving} onClick={() => void handleRate(rating)}>
-              {label}
-            </button>
-          ))}
+      {header}
+      <div className="study-scroll">
+        <div
+          className="study-card"
+          onClick={() => setRevealed(true)}
+          role={revealed ? undefined : "button"}
+          tabIndex={revealed ? undefined : -1}
+        >
+          {current.isNew && <span className="chip chip-new study-card-chip">新規</span>}
+          <div className="study-front">{current.card.front}</div>
+          {revealed && (
+            <>
+              <hr />
+              <div className="study-back">{current.card.back}</div>
+              {current.card.note && <div className="study-note muted">{current.card.note}</div>}
+            </>
+          )}
         </div>
-      )}
+      </div>
+      <footer className="study-actions">
+        {error && <p className="notice warning">{error}</p>}
+        {revealed ? (
+          <div className="rating-buttons">
+            {RATING_LABELS.map(({ rating, label, className }) => (
+              <button key={rating} type="button" className={className} disabled={saving} onClick={() => void handleRate(rating)}>
+                <span className="rating-label">{label}</span>
+                <span className="rating-interval">{intervals?.[rating]}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button type="button" className="primary reveal-button" onClick={() => setRevealed(true)}>
+            答えを表示
+          </button>
+        )}
+        <p className="muted study-remaining">残り {queue.length} 枚</p>
+      </footer>
     </section>
   );
 }

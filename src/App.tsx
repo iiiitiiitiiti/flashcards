@@ -130,7 +130,7 @@ export function App() {
     const entry = snapshot.decks.find((candidate) => candidate.deckId === view.deckId);
     if (entry) {
       return (
-        <main className="app">
+        <main className="app study-app">
           <StudyView deck={entry.deck} initialProgress={view.progress} onClose={closeStudy} />
         </main>
       );
@@ -171,9 +171,11 @@ export function App() {
                   <button type="button" className="deck-card-body" onClick={() => setView({ type: "deck", deckId: entry.deckId })}>
                     <strong>{entry.deck.name}</strong>
                     {entry.deck.description && <span className="muted">{entry.deck.description}</span>}
-                    <span className="muted">
-                      全 {entry.deck.cards.length} 枚
-                      {deckStats && ` ・ 期限切れ ${deckStats.due} / 新規 ${deckStats.fresh}`}
+                    <span className="deck-badges">
+                      {deckStats && deckStats.due > 0 && <span className="chip chip-due">復習 {deckStats.due}</span>}
+                      {deckStats && deckStats.fresh > 0 && <span className="chip chip-new">新規 {deckStats.fresh}</span>}
+                      {deckStats && studyCount === 0 && <span className="chip chip-done">今日は完了</span>}
+                      <span className="muted">全 {entry.deck.cards.length} 枚</span>
                     </span>
                   </button>
                   <button type="button" className="primary" disabled={studyCount === 0} onClick={() => void startStudy(entry.deckId)}>
