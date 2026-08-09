@@ -82,6 +82,29 @@ export async function listDecks(token: string | null): Promise<DeckListing> {
   return { commitSha, deckIds };
 }
 
+interface RepositoryMetadata {
+  full_name?: string;
+  permissions?: { push?: boolean };
+}
+
+export interface ConnectionTestResult {
+  repository: string;
+  writeAccess: "available" | "unavailable" | "unconfirmed";
+}
+
+/** PAT の読み取り・書き込み権限を確認する */
+export async function testConnection(token: string): Promise<ConnectionTestResult> {
+  const response = await apiRequest<RepositoryMetadata>(`/repos/${OWNER}/${REPOSITORY}`, token);
+  if (response.status === 401) throw new Error("トークンが無効です (401)。有効期限と値を確認してください。");
+  if (response.status === 403) throw new Error("アクセスが拒否されました (403)。トークンの権限を確認してください。");
+  if (response.status !== 200) throw new Error(`リポジトリ情報を取得できませんでした (${response.status})`);
+  const push = response.data.permissions?.push;
+  return {
+    repository: response.data.full_name ?? `${OWNER}/${REPOSITORY}`,
+    writeAccess: push === true ? "available" : push === false ? "unavailable" : "unconfirmed",
+  };
+}
+
 /** コミット固定 raw URL からデッキ JSON の生テキストを取得する（レート制限なし） */
 export async function fetchDeckRaw(commitSha: string, deckId: string): Promise<string> {
   let response: Response;

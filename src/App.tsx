@@ -3,6 +3,7 @@ import { readProgress } from "./db";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue } from "./srs";
 import { loadToken } from "./storage";
+import { SettingsView } from "./SettingsView";
 import { StudyView } from "./StudyView";
 import type { DeckSnapshot, ProgressRecord } from "./types";
 
@@ -11,7 +12,7 @@ interface DeckStats {
   fresh: number;
 }
 
-type View = { type: "home" } | { type: "study"; deckId: string; progress: ProgressRecord[] };
+type View = { type: "home" } | { type: "study"; deckId: string; progress: ProgressRecord[] } | { type: "settings" };
 
 function formatTimestamp(value: number): string {
   const date = new Date(value);
@@ -53,6 +54,11 @@ export function App() {
   }, [applySnapshot]);
 
   useEffect(() => {
+    // iOS のストレージ削除対策として永続化を一度だけ要求する（拒否されても続行）
+    void navigator.storage?.persist?.().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     // まずキャッシュを即表示し、裏で最新化する
     let cancelled = false;
     void loadCachedSnapshot().then((cached) => {
@@ -76,6 +82,20 @@ export function App() {
     if (snapshot) void updateStats(snapshot);
   }
 
+  if (view.type === "settings") {
+    return (
+      <main className="app">
+        <SettingsView
+          snapshot={snapshot}
+          onClose={() => {
+            setView({ type: "home" });
+            void refresh();
+          }}
+        />
+      </main>
+    );
+  }
+
   if (view.type === "study" && snapshot) {
     const entry = snapshot.decks.find((candidate) => candidate.deckId === view.deckId);
     if (entry) {
@@ -91,9 +111,12 @@ export function App() {
     <main className="app">
       <header className="app-header">
         <h1>暗記カード</h1>
-        <button type="button" onClick={() => void refresh()} disabled={refreshing}>
-          {refreshing ? "更新中…" : "更新"}
-        </button>
+        <div className="button-row">
+          <button type="button" onClick={() => void refresh()} disabled={refreshing}>
+            {refreshing ? "更新中…" : "更新"}
+          </button>
+          <button type="button" onClick={() => setView({ type: "settings" })}>設定</button>
+        </div>
       </header>
       {snapshot === null ? (
         <p className="muted">読み込み中…</p>

@@ -33,6 +33,27 @@ export function clearToken(): void {
   }
 }
 
+const LAST_BACKUP_KEY = "flashcards:last-backup-at";
+
+export function loadLastBackupAt(): number | null {
+  try {
+    const value = localStorage.getItem(LAST_BACKUP_KEY);
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastBackupAt(value: number): void {
+  try {
+    localStorage.setItem(LAST_BACKUP_KEY, String(value));
+  } catch {
+    // 記録できなくても致命的ではない
+  }
+}
+
 export function tokenPersistence(): "local" | "session" | "none" {
   try {
     if (sessionStorage.getItem(TOKEN_KEY)) return "session";
