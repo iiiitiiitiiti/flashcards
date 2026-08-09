@@ -278,7 +278,13 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
             >
               <span className="card-front">{card.front}</span>
               <span className="card-back muted">{card.back}</span>
-              {card.tags && card.tags.length > 0 && <span className="card-tags muted">{card.tags.join(" / ")}</span>}
+              {card.tags && card.tags.length > 0 && (
+                <span className="card-tags">
+                  {card.tags.map((tag) => (
+                    <span key={tag} className="tag-chip">{tag}</span>
+                  ))}
+                </span>
+              )}
             </button>
           </li>
         ))}

@@ -59,6 +59,29 @@ export function rate(progress: ProgressDTO | null, rating: ReviewRating, now: Da
   return toDTO(next.card);
 }
 
+/** 評価ボタンに表示する「次回出題までの目安」を4評価ぶん返す */
+export function previewIntervals(progress: ProgressDTO | null, now: Date): Record<ReviewRating, string> {
+  const card = progress ? fromDTO(progress) : createEmptyCard(now);
+  const preview = scheduler.repeat(card, now);
+  const result = {} as Record<ReviewRating, string>;
+  for (const rating of [1, 2, 3, 4] as const) {
+    result[rating] = formatInterval(preview[rating].card.due.getTime() - now.getTime());
+  }
+  return result;
+}
+
+function formatInterval(ms: number): string {
+  const minutes = ms / 60_000;
+  if (minutes < 60) return `${Math.max(1, Math.round(minutes))}分`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${Math.round(hours)}時間`;
+  const days = hours / 24;
+  if (days < 30) return `${Math.round(days)}日`;
+  const months = days / 30.44;
+  if (months < 12) return `${Math.round(months)}か月`;
+  return `${(days / 365.25).toFixed(1)}年`;
+}
+
 /** インポートした進捗データの構造検証。破損データは例外にする */
 export function validateProgressDTO(value: unknown): ProgressDTO {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
