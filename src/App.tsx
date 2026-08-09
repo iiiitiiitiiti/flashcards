@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { readProgress } from "./db";
+import { readProgress, upsertDeckCacheEntry } from "./db";
 import { DeckDetailView } from "./DeckDetailView";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue } from "./srs";
@@ -109,7 +109,17 @@ export function App() {
           <DeckDetailView
             deck={entry.deck}
             onClose={() => setView({ type: "home" })}
-            onDeckUpdated={() => void refresh()}
+            onDeckUpdated={(nextDeck) => {
+              // GitHub API 側の反映遅延を待たず、保存結果でスナップショットとキャッシュを即時更新する
+              const updated: DeckSnapshot = {
+                ...snapshot,
+                decks: snapshot.decks.map((candidate) =>
+                  candidate.deckId === entry.deckId ? { ...candidate, deck: nextDeck, fetchedAt: Date.now() } : candidate,
+                ),
+              };
+              void upsertDeckCacheEntry({ ...entry, deck: nextDeck, fetchedAt: Date.now() });
+              void applySnapshot(updated);
+            }}
           />
         </main>
       );

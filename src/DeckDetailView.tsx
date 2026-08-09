@@ -1,15 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
-import { deleteProgress } from "./db";
-import { upsertCard } from "./deckedit";
+import { deleteImportDraft, deleteProgress, readImportDraft, saveImportDraft } from "./db";
+import { appendCards, upsertCard } from "./deckedit";
 import { writeDeck } from "./github";
 import { loadToken } from "./storage";
+import type { ImportDraft } from "./types";
 
 interface DeckDetailViewProps {
   deck: Deck;
   onClose: () => void;
-  /** GitHub への保存成功後に呼ぶ（App がスナップショットを再取得する） */
-  onDeckUpdated: () => void;
+  /** GitHub への保存成功後に、保存結果の最新デッキを渡す（App が即時反映する） */
+  onDeckUpdated: (deck: Deck) => void;
 }
 
 interface EditorState {
@@ -35,7 +37,21 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [importDraft, setImportDraft] = useState<ImportDraft | null>(null);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [importResumed, setImportResumed] = useState(false);
+  const csvInputRef = useRef<HTMLInputElement>(null);
   const canEdit = loadToken() !== "";
+
+  useEffect(() => {
+    // 前回未完了のインポートがあれば再開を促す（同じ ID で再試行するため重複しない）
+    void readImportDraft(deck.id).then((draft) => {
+      if (draft) {
+        setImportDraft(draft);
+        setImportResumed(true);
+      }
+    });
+  }, [deck.id]);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -80,7 +96,7 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
       ...(parseTags(editor.tags) ? { tags: parseTags(editor.tags) } : {}),
     };
     try {
-      await writeDeck(
+      const next = await writeDeck(
         deck.id,
         loadToken(),
         `deck(${deck.id}): ${editor.cardId ? `edit card ${cardId}` : "add card"}`,
@@ -88,12 +104,66 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
       );
       setEditor(null);
       setMessage(editor.cardId ? "カードを更新しました。" : "カードを追加しました。");
-      onDeckUpdated();
+      onDeckUpdated(next);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "保存に失敗しました。");
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleCsvFile(file: File) {
+    setMessage(null);
+    setImportWarnings([]);
+    try {
+      const parsed = parseCardsCsv(await file.text());
+      // 取り込む全カードの ID をこの時点で確定し、draft として永続化する。
+      // PUT 成功後に応答だけ失われても、同じ ID での再試行が重複追加にならない
+      const draft: ImportDraft = {
+        draftId: crypto.randomUUID(),
+        deckId: deck.id,
+        cards: parsed.rows.map((row) => ({ id: crypto.randomUUID(), ...row })),
+        createdAt: Date.now(),
+      };
+      await saveImportDraft(draft);
+      setImportDraft(draft);
+      setImportResumed(false);
+      setImportWarnings(parsed.warnings);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "CSV の読み込みに失敗しました。");
+    }
+  }
+
+  async function handleConfirmImport() {
+    if (!importDraft || saving) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const next = await writeDeck(
+        deck.id,
+        loadToken(),
+        `deck(${deck.id}): import ${importDraft.cards.length} cards from CSV`,
+        (latest) => appendCards(latest, importDraft.cards).deck,
+      );
+      await deleteImportDraft(importDraft.draftId);
+      setMessage(`${importDraft.cards.length} 件のカードを取り込みました。`);
+      setImportDraft(null);
+      setImportWarnings([]);
+      onDeckUpdated(next);
+    } catch (error) {
+      setMessage(
+        `${error instanceof Error ? error.message : "インポートに失敗しました。"} 取り込み内容は保存されているので、後で再試行できます。`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCancelImport() {
+    if (!importDraft) return;
+    await deleteImportDraft(importDraft.draftId);
+    setImportDraft(null);
+    setImportWarnings([]);
   }
 
   async function handleResetProgress() {
@@ -153,8 +223,47 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
             </select>
           )}
           {canEdit && (
-            <button type="button" className="primary" onClick={() => openEditor(null)}>カード追加</button>
+            <>
+              <button type="button" className="primary" onClick={() => openEditor(null)}>カード追加</button>
+              <button type="button" onClick={() => csvInputRef.current?.click()}>CSV取込</button>
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden-input"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void handleCsvFile(file);
+                  event.target.value = "";
+                }}
+              />
+            </>
           )}
+        </div>
+      )}
+
+      {importDraft && (
+        <div className="settings-group">
+          <h2>CSVインポートの確認</h2>
+          {importResumed && <p className="notice warning">前回のインポートが未完了です。再試行するか破棄してください。</p>}
+          <p>
+            {importDraft.cards.length} 件のカードを「{deck.name}」へ追加します。
+          </p>
+          {importWarnings.map((warning) => (
+            <p key={warning} className="notice warning">{warning}</p>
+          ))}
+          <ul className="import-preview muted">
+            {importDraft.cards.slice(0, 5).map((card) => (
+              <li key={card.id}>{card.front} → {card.back}</li>
+            ))}
+            {importDraft.cards.length > 5 && <li>…ほか {importDraft.cards.length - 5} 件</li>}
+          </ul>
+          <div className="button-row">
+            <button type="button" className="primary" disabled={saving} onClick={() => void handleConfirmImport()}>
+              {saving ? "取込中…" : "GitHubへ取り込む"}
+            </button>
+            <button type="button" disabled={saving} onClick={() => void handleCancelImport()}>破棄</button>
+          </div>
         </div>
       )}
 

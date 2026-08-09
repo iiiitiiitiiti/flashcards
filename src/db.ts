@@ -90,6 +90,28 @@ export async function deleteProgress(deckId: string, cardId: string): Promise<vo
   await db.delete("cardProgress", [deckId, cardId]);
 }
 
+/** 書き戻し成功直後に、返ってきた最新デッキでキャッシュを即時更新する */
+export async function upsertDeckCacheEntry(entry: DeckCacheEntry): Promise<void> {
+  const db = await getDb();
+  await db.put("deckCache", entry);
+}
+
+export async function saveImportDraft(draft: ImportDraft): Promise<void> {
+  const db = await getDb();
+  await db.put("importDrafts", draft);
+}
+
+export async function readImportDraft(deckId: string): Promise<ImportDraft | undefined> {
+  const db = await getDb();
+  const drafts = await db.getAll("importDrafts");
+  return drafts.find((draft) => draft.deckId === deckId);
+}
+
+export async function deleteImportDraft(draftId: string): Promise<void> {
+  const db = await getDb();
+  await db.delete("importDrafts", draftId);
+}
+
 export async function deleteProgressByKeys(keys: [string, string][]): Promise<void> {
   const db = await getDb();
   const tx = db.transaction("cardProgress", "readwrite");
