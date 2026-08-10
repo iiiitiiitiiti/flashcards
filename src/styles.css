@@ -698,53 +698,49 @@ textarea {
 }
 
 /*
- * 視差効果を減らす設定時は、アニメを消すのではなく動き（回転・移動）を
- * クロスフェードへ置き換える（iOS「クロスフェードを優先」の意図に合わせる。
- * このサブ設定自体は Web から検出できないため、reduce 時は常にクロスフェード）。
+ * アニメーションは OS の「視差効果を減らす」を参照せず、既定でフル再生する
+ * （2026-08-10 ユーザー決定。Newmonic 等の一般的なアプリと同じ挙動）。
+ * 動きを減らしたい場合はアプリ内設定で data-motion="crossfade" に切り替え、
+ * 回転・移動をクロスフェード（opacity のみ）へ置き換える。
  */
-@media (prefers-reduced-motion: reduce) {
-  .progress-fill {
-    transition: none;
-  }
+:root[data-motion="crossfade"] .progress-fill {
+  transition: none;
+}
 
-  .flip-scene {
-    animation: card-enter-fade 0.28s ease;
-  }
+:root[data-motion="crossfade"] .flip-scene {
+  animation: card-enter-fade 0.28s ease;
+}
 
-  .flip-inner {
-    transition: none;
-  }
+:root[data-motion="crossfade"] .flip-inner,
+:root[data-motion="crossfade"] .flip-inner.flipped {
+  transition: none;
+  transform: none;
+}
 
-  .flip-inner,
-  .flip-inner.flipped {
-    transform: none;
-  }
+:root[data-motion="crossfade"] .flip-face {
+  backface-visibility: visible;
+  -webkit-backface-visibility: visible;
+  transform: none;
+  transition: opacity 0.3s ease;
+}
 
-  .flip-face {
-    backface-visibility: visible;
-    -webkit-backface-visibility: visible;
-    transform: none;
-    transition: opacity 0.3s ease;
-  }
+:root[data-motion="crossfade"] .flip-front {
+  opacity: 1;
+}
 
-  .flip-front {
-    opacity: 1;
-  }
+:root[data-motion="crossfade"] .flip-inner.flipped .flip-front {
+  opacity: 0;
+  pointer-events: none;
+}
 
-  .flip-inner.flipped .flip-front {
-    opacity: 0;
-    pointer-events: none;
-  }
+:root[data-motion="crossfade"] .flip-back {
+  opacity: 0;
+  pointer-events: none;
+}
 
-  .flip-back {
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .flip-inner.flipped .flip-back {
-    opacity: 1;
-    pointer-events: auto;
-  }
+:root[data-motion="crossfade"] .flip-inner.flipped .flip-back {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 @keyframes card-enter-fade {

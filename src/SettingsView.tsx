@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { exportBackup, importBackup } from "./backup";
 import { deleteProgressByKeys, readAllProgress } from "./db";
 import { testConnection } from "./github";
-import { clearToken, loadLastBackupAt, loadToken, saveLastBackupAt, saveToken, tokenPersistence } from "./storage";
+import { clearToken, loadLastBackupAt, loadMotionPreference, loadToken, saveLastBackupAt, saveMotionPreference, saveToken, tokenPersistence } from "./storage";
 import type { DeckSnapshot } from "./types";
 
 interface SettingsViewProps {
@@ -25,7 +25,15 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   const [lastBackupAt, setLastBackupAt] = useState(loadLastBackupAt());
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [orphanMessage, setOrphanMessage] = useState<string | null>(null);
+  const [crossfade, setCrossfade] = useState(loadMotionPreference() === "crossfade");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleMotionChange(next: boolean) {
+    setCrossfade(next);
+    const preference = next ? "crossfade" : "full";
+    saveMotionPreference(preference);
+    document.documentElement.dataset.motion = preference;
+  }
 
   useEffect(() => {
     void navigator.storage?.persisted?.().then(setStoragePersisted).catch(() => setStoragePersisted(null));
@@ -159,6 +167,15 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
           }}
         />
         {backupMessage && <p className="notice">{backupMessage}</p>}
+      </div>
+
+      <h2>アニメーション</h2>
+      <div className="settings-group">
+        <label className="checkbox-label">
+          <input type="checkbox" checked={crossfade} onChange={(event) => handleMotionChange(event.target.checked)} />
+          動きを減らす（カードの反転・移動をクロスフェードにする）
+        </label>
+        <p className="muted">OS の「視差効果を減らす」設定に関係なく、この設定だけで切り替わります。</p>
       </div>
 
       <h2>メンテナンス</h2>

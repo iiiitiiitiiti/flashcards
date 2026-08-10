@@ -33,6 +33,27 @@ export function clearToken(): void {
   }
 }
 
+const MOTION_KEY = "flashcards:motion";
+
+export type MotionPreference = "full" | "crossfade";
+
+/** アニメーション設定。OS の視差効果設定は参照せず、アプリ内設定のみで制御する */
+export function loadMotionPreference(): MotionPreference {
+  try {
+    return localStorage.getItem(MOTION_KEY) === "crossfade" ? "crossfade" : "full";
+  } catch {
+    return "full";
+  }
+}
+
+export function saveMotionPreference(value: MotionPreference): void {
+  try {
+    localStorage.setItem(MOTION_KEY, value);
+  } catch {
+    // 保存できなくても既定（full）で動く
+  }
+}
+
 const LAST_BACKUP_KEY = "flashcards:last-backup-at";
 
 export function loadLastBackupAt(): number | null {
