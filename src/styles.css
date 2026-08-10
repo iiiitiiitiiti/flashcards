@@ -349,6 +349,42 @@ body.study-lock {
   perspective: 1200px;
   cursor: pointer;
   animation: card-enter 0.28s ease;
+  /* 縦はカード内スクロールに残し、横スワイプだけ自前で扱う */
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.drag-layer {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
+.drag-layer.drag-settle {
+  transition: transform 0.2s ease;
+}
+
+.swipe-badge {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.swipe-badge-left {
+  background: var(--color-again);
+}
+
+.swipe-badge-right {
+  background: var(--color-good);
 }
 
 .flip-inner {
