@@ -11,6 +11,23 @@ import type { DeckSnapshot, ProgressRecord } from "./types";
 interface DeckStats {
   due: number;
   fresh: number;
+  /** FSRS の Review 状態（定着）に達したカードの割合 */
+  learnedPercent: number;
+}
+
+const FSRS_STATE_REVIEW = 2;
+
+function Donut({ percent }: { percent: number }) {
+  return (
+    <div
+      className="donut"
+      style={{ background: `conic-gradient(var(--color-primary) ${percent * 3.6}deg, var(--color-border) 0deg)` }}
+      role="img"
+      aria-label={`定着率 ${percent}%`}
+    >
+      <span>{percent}%</span>
+    </div>
+  );
 }
 
 type View =
@@ -35,8 +52,15 @@ export function App() {
     const now = new Date();
     const next = new Map<string, DeckStats>();
     for (const entry of target.decks) {
-      const queue = buildStudyQueue(entry.deck, await readProgress(entry.deckId), now);
-      next.set(entry.deckId, { due: queue.due.length, fresh: queue.fresh.length });
+      const records = await readProgress(entry.deckId);
+      const queue = buildStudyQueue(entry.deck, records, now);
+      const cardIds = new Set(entry.deck.cards.map((card) => card.id));
+      const learned = records.filter((record) => cardIds.has(record.cardId) && record.progress.state === FSRS_STATE_REVIEW).length;
+      next.set(entry.deckId, {
+        due: queue.due.length,
+        fresh: queue.fresh.length,
+        learnedPercent: entry.deck.cards.length === 0 ? 0 : Math.round((learned / entry.deck.cards.length) * 100),
+      });
     }
     setStats(next);
   }, []);
@@ -162,6 +186,7 @@ export function App() {
             <p key={warning} className="notice warning">{warning}</p>
           ))}
           {snapshot.decks.length === 0 && !snapshot.offline && <p className="muted">デッキがありません。decks/ に JSON を追加してください。</p>}
+          {snapshot.decks.length > 0 && <h2>マイデッキ</h2>}
           <ul className="deck-list">
             {snapshot.decks.map((entry) => {
               const deckStats = stats.get(entry.deckId);
@@ -178,9 +203,12 @@ export function App() {
                       <span className="muted">全 {entry.deck.cards.length} 枚</span>
                     </span>
                   </button>
-                  <button type="button" className="primary" disabled={studyCount === 0} onClick={() => void startStudy(entry.deckId)}>
-                    {studyCount === 0 ? "完了" : "学習する"}
-                  </button>
+                  <div className="deck-card-side">
+                    {deckStats && <Donut percent={deckStats.learnedPercent} />}
+                    <button type="button" className="primary" disabled={studyCount === 0} onClick={() => void startStudy(entry.deckId)}>
+                      {studyCount === 0 ? "完了" : "学習する"}
+                    </button>
+                  </div>
                 </li>
               );
             })}

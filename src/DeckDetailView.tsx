@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
-import { deleteImportDraft, deleteProgress, readImportDraft, saveImportDraft } from "./db";
+import { deleteImportDraft, deleteProgress, readImportDraft, readProgress, saveImportDraft } from "./db";
 import { appendCards, upsertCard } from "./deckedit";
 import { writeDeck } from "./github";
 import { loadToken } from "./storage";
-import type { ImportDraft } from "./types";
+import type { ImportDraft, ProgressRecord } from "./types";
+
+const FSRS_STATE_REVIEW = 2;
 
 interface DeckDetailViewProps {
   deck: Deck;
@@ -41,7 +43,14 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importResumed, setImportResumed] = useState(false);
   const csvInputRef = useRef<HTMLInputElement>(null);
+  const [progressByCard, setProgressByCard] = useState<Map<string, ProgressRecord>>(new Map());
   const canEdit = loadToken() !== "";
+
+  useEffect(() => {
+    void readProgress(deck.id).then((records) => {
+      setProgressByCard(new Map(records.map((record) => [record.cardId, record])));
+    });
+  }, [deck.id]);
 
   useEffect(() => {
     // 前回未完了のインポートがあれば再開を促す（同じ ID で再試行するため重複しない）
@@ -60,6 +69,8 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
     }
     return [...tags].sort((left, right) => left.localeCompare(right, "ja"));
   }, [deck]);
+
+  const orderById = useMemo(() => new Map(deck.cards.map((card, index) => [card.id, index + 1])), [deck]);
 
   const visibleCards = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -268,26 +279,37 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
       )}
 
       <ul className="card-list">
-        {visibleCards.map((card) => (
-          <li key={card.id} className="card-row">
-            <button
-              type="button"
-              className="card-row-button"
-              onClick={() => (canEdit ? openEditor(card) : undefined)}
-              disabled={!canEdit}
-            >
-              <span className="card-front">{card.front}</span>
-              <span className="card-back muted">{card.back}</span>
-              {card.tags && card.tags.length > 0 && (
-                <span className="card-tags">
-                  {card.tags.map((tag) => (
-                    <span key={tag} className="tag-chip">{tag}</span>
-                  ))}
+        {visibleCards.map((card) => {
+          const record = progressByCard.get(card.id);
+          const phase = record?.progress.reps ?? 0;
+          const stable = record?.progress.state === FSRS_STATE_REVIEW;
+          return (
+            <li key={card.id} className="card-row">
+              <button
+                type="button"
+                className="card-row-button"
+                onClick={() => (canEdit ? openEditor(card) : undefined)}
+                disabled={!canEdit}
+              >
+                <span className="card-row-meta">
+                  <span className="card-index">{orderById.get(card.id)}</span>
+                  {phase > 0 && (
+                    <span className={`phase-chip${stable ? " phase-chip--stable" : ""}`}>フェーズ {phase}</span>
+                  )}
                 </span>
-              )}
-            </button>
-          </li>
-        ))}
+                <span className="card-front"><span className="qa-mark qa-q">Q</span>{card.front}</span>
+                <span className="card-back"><span className="qa-mark qa-a">A</span>{card.back}</span>
+                {card.tags && card.tags.length > 0 && (
+                  <span className="card-tags">
+                    {card.tags.map((tag) => (
+                      <span key={tag} className="tag-chip">{tag}</span>
+                    ))}
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
         {visibleCards.length === 0 && <li className="muted">該当するカードがありません。</li>}
       </ul>
     </section>
