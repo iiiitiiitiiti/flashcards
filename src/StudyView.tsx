@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
 import { buildStudyQueue, dayKey, previewIntervals, rate } from "./srs";
@@ -39,6 +39,12 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
   const [reviewedCount, setReviewedCount] = useState(0);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
   const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
+
+  useEffect(() => {
+    // 学習中はページ全体のスクロール（iOS のバウンス含む）を止める
+    document.body.classList.add("study-lock");
+    return () => document.body.classList.remove("study-lock");
+  }, []);
 
   const current = queue[0];
   const progressPercent = reviewedCount + queue.length === 0 ? 100 : Math.round((reviewedCount / (reviewedCount + queue.length)) * 100);
@@ -138,9 +144,10 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
       <div className="study-scroll">
         <div
           className="study-card"
-          onClick={() => setRevealed(true)}
-          role={revealed ? undefined : "button"}
-          tabIndex={revealed ? undefined : -1}
+          onClick={() => setRevealed((value) => !value)}
+          role="button"
+          tabIndex={-1}
+          aria-label={revealed ? "タップで問題面に戻る" : "タップで答えを表示"}
         >
           {current.isNew && <span className="chip chip-new study-card-chip">新規</span>}
           <div className="study-front">{current.card.front}</div>
