@@ -3,7 +3,7 @@ import { readProgress, upsertDeckCacheEntry } from "./db";
 import { DeckDetailView } from "./DeckDetailView";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue } from "./srs";
-import { loadToken } from "./storage";
+import { loadMotionPreference, loadToken } from "./storage";
 import { SettingsView } from "./SettingsView";
 import { StudyView } from "./StudyView";
 import type { DeckSnapshot, ProgressRecord } from "./types";
@@ -85,6 +85,8 @@ export function App() {
   useEffect(() => {
     // iOS のストレージ削除対策として永続化を一度だけ要求する（拒否されても続行）
     void navigator.storage?.persist?.().catch(() => undefined);
+    // アニメーション設定を反映（OS の視差効果設定は参照しない）
+    document.documentElement.dataset.motion = loadMotionPreference();
   }, []);
 
   useEffect(() => {
