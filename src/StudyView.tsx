@@ -142,22 +142,27 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
     <section className="study">
       {header}
       <div className="study-scroll">
+        {/* key でカードごとに再マウントし、入場アニメーションを発火させる（ロジックはアニメに依存しない） */}
         <div
-          className="study-card"
+          key={`${reviewedCount}-${current.card.id}`}
+          className="flip-scene"
           onClick={() => setRevealed((value) => !value)}
           role="button"
           tabIndex={-1}
           aria-label={revealed ? "タップで問題面に戻る" : "タップで答えを表示"}
         >
-          {current.isNew && <span className="chip chip-new study-card-chip">新規</span>}
-          <div className="study-front">{current.card.front}</div>
-          {revealed && (
-            <>
+          <div className={`flip-inner${revealed ? " flipped" : ""}`}>
+            <div className="study-card flip-face flip-front" aria-hidden={revealed}>
+              {current.isNew && <span className="chip chip-new study-card-chip">新規</span>}
+              <div className="study-front">{current.card.front}</div>
+            </div>
+            <div className="study-card flip-face flip-back" aria-hidden={!revealed}>
+              <div className="study-front">{current.card.front}</div>
               <hr />
               <div className="study-back">{current.card.back}</div>
               {current.card.note && <div className="study-note muted">{current.card.note}</div>}
-            </>
-          )}
+            </div>
+          </div>
         </div>
       </div>
       <footer className="study-actions">

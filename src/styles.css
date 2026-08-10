@@ -340,6 +340,50 @@ body.study-lock {
   cursor: pointer;
 }
 
+/* ===== カードの反転・入場アニメーション（装飾のみ。状態切替はJS側で即時） ===== */
+
+.flip-scene {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  perspective: 1200px;
+  cursor: pointer;
+  animation: card-enter 0.28s ease;
+}
+
+.flip-inner {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.flip-inner.flipped {
+  transform: rotateY(180deg);
+}
+
+.flip-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.flip-back {
+  transform: rotateY(180deg);
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateX(36px) rotate(1.5deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* auto マージンで中央寄せ（justify-content: center は overflow 時に先頭が切れるため使わない） */
 .study-card > .study-front,
 .study-card > .summary-emoji {
@@ -655,6 +699,14 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .progress-fill {
+    transition: none;
+  }
+
+  .flip-scene {
+    animation: none;
+  }
+
+  .flip-inner {
     transition: none;
   }
 }

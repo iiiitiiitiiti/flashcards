@@ -26,3 +26,4 @@ UI に関する確定済みの設計判断。変更するときはここを更�
 - 学習中はページの上下スクロールを禁止する（body に study-lock クラス、overscroll-behavior: none）。カード本文が収まらない場合のみカード内部でスクロール
 - カード枠は操作エリアを除く画面の縦いっぱいに広げる。中央寄せは auto マージン方式（justify-content: center は overflow 時に先頭が切れるため使わない）
 - カードのタップは表⇄裏のトグル（答えを開いた後もタップで問題面に戻れる）
+- カードの表裏は 3D 反転アニメーション（rotateY・0.4s）、次カードは右からの入場アニメーション（0.28s、key 再マウントで発火）。両面を常に DOM に置き backface-visibility で切替、非表示面は aria-hidden。状態切替は即時で、アニメはロジックに関与しない。`prefers-reduced-motion` では両方無効化
