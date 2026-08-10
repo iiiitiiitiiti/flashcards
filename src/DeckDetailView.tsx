@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
-import { deleteImportDraft, deleteProgress, readImportDraft, readProgress, saveImportDraft } from "./db";
+import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readImportDraft, readProgress, saveImportDraft } from "./db";
 import { appendCards, upsertCard } from "./deckedit";
 import { writeDeck } from "./github";
 import { loadToken } from "./storage";
@@ -177,6 +177,13 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
     setImportWarnings([]);
   }
 
+  async function handleResetDeckProgress() {
+    if (!window.confirm(`「${deck.name}」の学習進捗をすべてリセットしますか？ 全カードが新規に戻ります（カード自体は消えません）。`)) return;
+    const deleted = await deleteProgressByDeck(deck.id);
+    setProgressByCard(new Map());
+    setMessage(`${deleted} 件の学習進捗をリセットしました。`);
+  }
+
   async function handleResetProgress() {
     if (!editor?.cardId) return;
     if (!window.confirm("このカードの学習進捗をリセットしますか？（新規カードに戻ります）")) return;
@@ -312,6 +319,10 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
         })}
         {visibleCards.length === 0 && <li className="muted">該当するカードがありません。</li>}
       </ul>
+      <div className="deck-footer">
+        <button type="button" onClick={() => void handleResetDeckProgress()}>このデッキの学習進捗をリセット</button>
+        <p className="muted">この端末の学習記録だけを消します。カードは消えません。</p>
+      </div>
     </section>
   );
 }

@@ -132,7 +132,11 @@ export function App() {
         <main className="app">
           <DeckDetailView
             deck={entry.deck}
-            onClose={() => setView({ type: "home" })}
+            onClose={() => {
+              setView({ type: "home" });
+              // デッキ詳細での進捗リセットをホームの件数・ゲージへ反映する
+              void updateStats(snapshot);
+            }}
             onDeckUpdated={(nextDeck) => {
               // GitHub API 側の反映遅延を待たず、保存結果でスナップショットとキャッシュを即時更新する
               const updated: DeckSnapshot = {

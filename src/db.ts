@@ -112,6 +112,18 @@ export async function deleteImportDraft(draftId: string): Promise<void> {
   await db.delete("importDrafts", draftId);
 }
 
+/** デッキの学習進捗をすべて削除する（reviewLog は残す）。削除件数を返す */
+export async function deleteProgressByDeck(deckId: string): Promise<number> {
+  const db = await getDb();
+  const tx = db.transaction("cardProgress", "readwrite");
+  const keys = await tx.store.index("byDeck").getAllKeys(deckId);
+  for (const key of keys) {
+    await tx.store.delete(key);
+  }
+  await tx.done;
+  return keys.length;
+}
+
 export async function deleteProgressByKeys(keys: [string, string][]): Promise<void> {
   const db = await getDb();
   const tx = db.transaction("cardProgress", "readwrite");

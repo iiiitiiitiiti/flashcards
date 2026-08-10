@@ -634,6 +634,19 @@ textarea {
   display: none;
 }
 
+.deck-footer {
+  margin: 24px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.deck-footer .muted {
+  font-size: 13px;
+  margin: 0;
+}
+
 .import-preview {
   margin: 0;
   padding-left: 20px;
