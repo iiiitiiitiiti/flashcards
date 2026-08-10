@@ -697,16 +697,61 @@ textarea {
   font-size: 14px;
 }
 
+/*
+ * 視差効果を減らす設定時は、アニメを消すのではなく動き（回転・移動）を
+ * クロスフェードへ置き換える（iOS「クロスフェードを優先」の意図に合わせる。
+ * このサブ設定自体は Web から検出できないため、reduce 時は常にクロスフェード）。
+ */
 @media (prefers-reduced-motion: reduce) {
   .progress-fill {
     transition: none;
   }
 
   .flip-scene {
-    animation: none;
+    animation: card-enter-fade 0.28s ease;
   }
 
   .flip-inner {
     transition: none;
+  }
+
+  .flip-inner,
+  .flip-inner.flipped {
+    transform: none;
+  }
+
+  .flip-face {
+    backface-visibility: visible;
+    -webkit-backface-visibility: visible;
+    transform: none;
+    transition: opacity 0.3s ease;
+  }
+
+  .flip-front {
+    opacity: 1;
+  }
+
+  .flip-inner.flipped .flip-front {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .flip-back {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .flip-inner.flipped .flip-back {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@keyframes card-enter-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
