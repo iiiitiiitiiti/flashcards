@@ -2,8 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import { exportBackup, importBackup } from "./backup";
 import { deleteProgressByKeys, readAllProgress } from "./db";
 import { testConnection } from "./github";
-import { clearToken, loadLastBackupAt, loadMotionPreference, loadToken, saveLastBackupAt, saveMotionPreference, saveToken, tokenPersistence } from "./storage";
-import type { DeckSnapshot } from "./types";
+import {
+  BUZZER_SPEEDS,
+  clearToken,
+  loadBuzzerSpeed,
+  loadLastBackupAt,
+  loadMotionPreference,
+  loadRatingThresholds,
+  loadToken,
+  saveBuzzerSpeed,
+  saveLastBackupAt,
+  saveMotionPreference,
+  saveRatingThresholds,
+  saveToken,
+  tokenPersistence,
+} from "./storage";
+import { normalizeRatingThresholds } from "./srs";
+import type { DeckSnapshot, RatingThresholds } from "./types";
 
 interface SettingsViewProps {
   snapshot: DeckSnapshot | null;
@@ -26,6 +41,8 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [orphanMessage, setOrphanMessage] = useState<string | null>(null);
   const [crossfade, setCrossfade] = useState(loadMotionPreference() === "crossfade");
+  const [buzzerSpeed, setBuzzerSpeed] = useState(loadBuzzerSpeed);
+  const [thresholds, setThresholds] = useState<RatingThresholds>(loadRatingThresholds);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleMotionChange(next: boolean) {
@@ -33,6 +50,22 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
     const preference = next ? "crossfade" : "full";
     saveMotionPreference(preference);
     document.documentElement.dataset.motion = preference;
+  }
+
+  function handleBuzzerSpeedChange(ms: number) {
+    setBuzzerSpeed(ms);
+    saveBuzzerSpeed(ms);
+  }
+
+  function handleThresholdChange(key: keyof RatingThresholds, value: string) {
+    // 入力途中は素通しし、保存時にだけ昇順・上限へ整える
+    const next = { ...thresholds, [key]: Number(value) };
+    setThresholds(next);
+    saveRatingThresholds(next);
+  }
+
+  function handleThresholdBlur() {
+    setThresholds(normalizeRatingThresholds(thresholds));
   }
 
   useEffect(() => {
@@ -115,8 +148,8 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   return (
     <section>
       <header className="app-header">
+        <button type="button" className="icon-button" onClick={onClose} aria-label="戻る">←</button>
         <h1>設定</h1>
-        <button type="button" onClick={onClose}>戻る</button>
       </header>
 
       <h2>GitHub トークン（編集用）</h2>
@@ -142,6 +175,43 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
           </button>
         </div>
         {tokenMessage && <p className="notice">{tokenMessage}</p>}
+      </div>
+
+      <h2>学習</h2>
+      <div className="settings-group">
+        <span className="sheet-label">早押しの表示速度</span>
+        <div className="segmented">
+          {BUZZER_SPEEDS.map((speed) => (
+            <button key={speed.ms} type="button" aria-pressed={buzzerSpeed === speed.ms} onClick={() => handleBuzzerSpeedChange(speed.ms)}>
+              {speed.label}
+            </button>
+          ))}
+        </div>
+        <span className="sheet-label">右スワイプの評価に使う秒数</span>
+        <p className="muted">
+          答えを表示してからスワイプするまでの時間で評価が決まります。この秒数より速ければその評価になります。
+        </p>
+        <div className="threshold-row">
+          {([
+            { key: "easy", label: "簡単" },
+            { key: "good", label: "普通" },
+            { key: "hard", label: "難しい" },
+          ] as const).map(({ key, label }) => (
+            <label key={key} className="threshold-field">
+              {label}
+              <input
+                type="number"
+                min={1}
+                max={600}
+                step={1}
+                value={thresholds[key]}
+                onChange={(event) => handleThresholdChange(key, event.target.value)}
+                onBlur={handleThresholdBlur}
+              />
+            </label>
+          ))}
+        </div>
+        <p className="muted">「難しい」の秒数を超えると「もう一度」になります。</p>
       </div>
 
       <h2>学習進捗のバックアップ</h2>

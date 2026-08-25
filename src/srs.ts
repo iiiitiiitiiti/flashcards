@@ -1,6 +1,6 @@
 import { createEmptyCard, fsrs, type Card, type Grade } from "ts-fsrs";
 import type { Deck, DeckCard } from "./deck";
-import type { ProgressDTO, ProgressRecord, ReviewRating } from "./types";
+import type { ProgressDTO, ProgressRecord, RatingThresholds, ReviewRating } from "./types";
 
 // ts-fsrs の型・オブジェクトはこのファイルの外へ出さない。
 // 永続化は ProgressDTO（epoch ミリ秒・formatVersion 付き）のみを使う。
@@ -68,6 +68,31 @@ export function previewIntervals(progress: ProgressDTO | null, now: Date): Recor
     result[rating] = formatInterval(preview[rating].card.due.getTime() - now.getTime());
   }
   return result;
+}
+
+/** 既定の振り分け境界（秒）。実際に使って調整する前提の仮置きで、設定画面から変更できる */
+export const DEFAULT_RATING_THRESHOLDS: RatingThresholds = { easy: 2, good: 5, hard: 10 };
+
+/**
+ * 答えを表示してからスワイプするまでの経過時間を4評価へ振り分ける。
+ * 即答＝簡単、迷うほど評価が下がり、hard 以上かかったら「もう一度」。
+ */
+export function ratingFromElapsed(elapsedMs: number, thresholds: RatingThresholds): ReviewRating {
+  const seconds = Math.max(0, elapsedMs) / 1000;
+  if (seconds < thresholds.easy) return 4;
+  if (seconds < thresholds.good) return 3;
+  if (seconds < thresholds.hard) return 2;
+  return 1;
+}
+
+/** 境界が空・0以下・逆順でも破綻しないように整える（設定画面の入力を通す用） */
+export function normalizeRatingThresholds(value: Partial<RatingThresholds> | null | undefined): RatingThresholds {
+  const pick = (input: unknown, fallback: number) =>
+    typeof input === "number" && Number.isFinite(input) && input > 0 ? Math.min(600, input) : fallback;
+  const easy = pick(value?.easy, DEFAULT_RATING_THRESHOLDS.easy);
+  const good = Math.max(pick(value?.good, DEFAULT_RATING_THRESHOLDS.good), easy);
+  const hard = Math.max(pick(value?.hard, DEFAULT_RATING_THRESHOLDS.hard), good);
+  return { easy, good, hard };
 }
 
 function formatInterval(ms: number): string {

@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { Deck } from "../src/deck";
-import { buildStudyQueue, dayKey, NEW_CARDS_PER_DAY, previewIntervals, rate, validateProgressDTO } from "../src/srs";
+import {
+  buildStudyQueue,
+  dayKey,
+  DEFAULT_RATING_THRESHOLDS,
+  NEW_CARDS_PER_DAY,
+  normalizeRatingThresholds,
+  previewIntervals,
+  rate,
+  ratingFromElapsed,
+  validateProgressDTO,
+} from "../src/srs";
 import type { ProgressDTO, ProgressRecord } from "../src/types";
 
 const NOW = new Date("2026-08-09T03:00:00Z");
@@ -136,5 +146,31 @@ describe("buildStudyQueue", () => {
     expect(queue.due).toHaveLength(0);
     expect(queue.fresh).toHaveLength(0);
     expect(queue.freshHeldBack).toBe(0);
+  });
+});
+
+describe("ratingFromElapsed / normalizeRatingThresholds", () => {
+  const thresholds = DEFAULT_RATING_THRESHOLDS;
+
+  it("即答は「簡単」、迷うほど評価が下がる", () => {
+    expect(ratingFromElapsed(0, thresholds)).toBe(4);
+    expect(ratingFromElapsed(1_900, thresholds)).toBe(4);
+    expect(ratingFromElapsed(2_000, thresholds)).toBe(3);
+    expect(ratingFromElapsed(4_999, thresholds)).toBe(3);
+    expect(ratingFromElapsed(5_000, thresholds)).toBe(2);
+    expect(ratingFromElapsed(9_999, thresholds)).toBe(2);
+    expect(ratingFromElapsed(10_000, thresholds)).toBe(1);
+    expect(ratingFromElapsed(600_000, thresholds)).toBe(1);
+  });
+
+  it("負の経過時間（時計のずれ）は0として扱う", () => {
+    expect(ratingFromElapsed(-5_000, thresholds)).toBe(4);
+  });
+
+  it("欠損・0以下・逆順の境界を昇順へ整える", () => {
+    expect(normalizeRatingThresholds(null)).toEqual(DEFAULT_RATING_THRESHOLDS);
+    expect(normalizeRatingThresholds({ easy: 0, good: -1, hard: Number.NaN })).toEqual(DEFAULT_RATING_THRESHOLDS);
+    expect(normalizeRatingThresholds({ easy: 8, good: 3, hard: 1 })).toEqual({ easy: 8, good: 8, hard: 8 });
+    expect(normalizeRatingThresholds({ easy: 1, good: 9999, hard: 9999 })).toEqual({ easy: 1, good: 600, hard: 600 });
   });
 });

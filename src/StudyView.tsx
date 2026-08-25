@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
-import { buildStudyQueue, dayKey, previewIntervals, rate } from "./srs";
-import type { ProgressRecord, ReviewRating } from "./types";
+import { buildStudyQueue, dayKey, previewIntervals, rate, ratingFromElapsed } from "./srs";
+import { loadBuzzerSpeed, loadRatingThresholds } from "./storage";
+import type { ProgressRecord, ReviewRating, StudyMode } from "./types";
 
 interface StudyViewProps {
   deck: Deck;
   /** 学習開始時点の進捗。セッション中は外部更新を反映しない（スナップショット固定） */
   initialProgress: ProgressRecord[];
+  /** 通常学習か早押しクイズか */
+  mode: StudyMode;
+  /** このセッションで出題する上限枚数 */
+  sessionSize: number;
   onClose: () => void;
 }
 
@@ -16,29 +21,46 @@ interface QueueItem {
   isNew: boolean;
 }
 
-const RATING_LABELS: { rating: ReviewRating; label: string; className: string }[] = [
-  { rating: 1, label: "もう一度", className: "rate-again" },
+const RATING_LABELS: Record<ReviewRating, string> = {
+  1: "もう一度",
+  2: "難しい",
+  3: "普通",
+  4: "簡単",
+};
+
+// 明示操作は2択。細かい4段階はスワイプの経過秒数で自動的に振り分ける
+const ANSWER_BUTTONS: { rating: ReviewRating; label: string; className: string }[] = [
   { rating: 2, label: "難しい", className: "rate-hard" },
-  { rating: 3, label: "普通", className: "rate-good" },
-  { rating: 4, label: "簡単", className: "rate-easy" },
+  { rating: 3, label: "わかった", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
+const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }[] = [
+  { rating: 1, label: "不正解", className: "rate-again" },
+  { rating: 3, label: "正解", className: "rate-good" },
+];
+
+export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
     const queue = buildStudyQueue(deck, initialProgress, new Date());
     return [
       ...queue.due.map((card) => ({ card, isNew: false })),
       ...queue.fresh.map((card) => ({ card, isNew: true })),
-    ];
-  }, [deck, initialProgress]);
+      // 選んだ枚数でセッションを打ち切る（「もう一度」の再出題はこの上限に含めない）
+    ].slice(0, sessionSize);
+  }, [deck, initialProgress, sessionSize]);
 
   const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
   const [revealed, setRevealed] = useState(false);
+  /** 答えを表示した時刻。スワイプまでの経過時間で評価を振り分けるのに使う */
+  const [revealedAt, setRevealedAt] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reviewedCount, setReviewedCount] = useState(0);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
   const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
+  // 設定はセッション開始時の値で固定する（学習中に変わらない）
+  const thresholds = useRef(loadRatingThresholds()).current;
+  const buzzerSpeed = useRef(loadBuzzerSpeed()).current;
 
   useEffect(() => {
     // 学習中はページ全体のスクロール（iOS のバウンス含む）を止める
@@ -46,7 +68,27 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
     return () => document.body.classList.remove("study-lock");
   }, []);
 
-  // 左右スワイプ評価（答え表示中のみ）。左=もう一度、右=普通
+  const current = queue[0];
+
+  // 早押し: 問題文を1文字ずつ送り、押した時点で止める
+  const buzzerChars = useMemo(() => (current ? Array.from(current.card.front) : []), [current]);
+  const [shownChars, setShownChars] = useState(0);
+  const [buzzedAt, setBuzzedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    // カードが変わったら読み上げを最初から
+    setShownChars(0);
+    setBuzzedAt(null);
+  }, [current, reviewedCount]);
+
+  useEffect(() => {
+    if (mode !== "buzzer" || !current || revealed) return;
+    if (shownChars >= buzzerChars.length) return;
+    const timer = window.setTimeout(() => setShownChars((count) => count + 1), buzzerSpeed);
+    return () => window.clearTimeout(timer);
+  }, [mode, current, revealed, shownChars, buzzerChars.length, buzzerSpeed]);
+
+  // 左右スワイプ評価（答え表示中のみ）。左=もう一度、右=経過秒数で自動振り分け
   const SWIPE_THRESHOLD = 80;
   const [dragX, setDragX] = useState(0);
   const dragRef = useRef({ pointerId: -1, startX: 0, startY: 0, horizontal: false, suppressClick: false });
@@ -81,10 +123,27 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
     setDragX(0);
     if (cancelled || !drag.horizontal) return;
     if (dx <= -SWIPE_THRESHOLD) void handleRate(1);
-    else if (dx >= SWIPE_THRESHOLD) void handleRate(3);
+    else if (dx >= SWIPE_THRESHOLD) void handleRate(swipeRating());
   }
 
-  const current = queue[0];
+  /** 右スワイプの評価。答えを表示してからの経過時間で 簡単/普通/難しい/もう一度 を決める */
+  function swipeRating(): ReviewRating {
+    if (revealedAt === null) return 3;
+    return ratingFromElapsed(Date.now() - revealedAt, thresholds);
+  }
+
+  function reveal() {
+    setRevealed(true);
+    setRevealedAt(Date.now());
+  }
+
+  /** 早押し: 読み上げを止めて答えを表示する */
+  function buzz() {
+    if (revealed) return;
+    setBuzzedAt(shownChars);
+    reveal();
+  }
+
   const progressPercent = reviewedCount + queue.length === 0 ? 100 : Math.round((reviewedCount / (reviewedCount + queue.length)) * 100);
 
   const intervals = useMemo(
@@ -127,13 +186,14 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
       return rating === 1 ? [...rest, { card: current.card, isNew: false }] : rest;
     });
     setRevealed(false);
+    setRevealedAt(null);
     setSaving(false);
   }
 
   const header = (
     <header className="study-header">
       <div className="study-header-row">
-        <h1>{deck.name}</h1>
+        <h1>{deck.name}{mode === "buzzer" ? "（早押し）" : ""}</h1>
         <button type="button" onClick={onClose}>{current ? "中断" : "閉じる"}</button>
       </div>
       <div
@@ -176,6 +236,59 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
     );
   }
 
+  if (mode === "buzzer") {
+    return (
+      <section className="study">
+        {header}
+        <div className="study-scroll">
+          <div
+            key={`${reviewedCount}-${current.card.id}`}
+            className="study-card buzzer-card"
+            onClick={buzz}
+            role="button"
+            tabIndex={-1}
+            aria-label={revealed ? "答えを表示中" : "タップで押す"}
+          >
+            {revealed ? (
+              <>
+                <div className="study-front">{current.card.front}</div>
+                <hr />
+                <div className="study-back">{current.card.back}</div>
+                {current.card.note && <div className="study-note muted">{current.card.note}</div>}
+              </>
+            ) : (
+              <div className="study-front buzzer-text">
+                {buzzerChars.slice(0, shownChars).join("")}
+                <span className="buzzer-cursor" aria-hidden="true" />
+              </div>
+            )}
+          </div>
+        </div>
+        <footer className="study-actions">
+          {error && <p className="notice warning">{error}</p>}
+          {revealed ? (
+            <div className="rating-buttons">
+              {BUZZER_BUTTONS.map(({ rating, label, className }) => (
+                <button key={rating} type="button" className={className} disabled={saving} onClick={() => void handleRate(rating)}>
+                  <span className="rating-label">{label}</span>
+                  <span className="rating-interval">{intervals?.[rating]}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button type="button" className="primary reveal-button buzz-button" onClick={buzz}>
+              押す
+            </button>
+          )}
+          <p className="muted study-remaining">
+            残り {queue.length} 枚
+            {buzzedAt !== null ? `・${buzzedAt}/${buzzerChars.length} 文字で押した` : `・${shownChars}/${buzzerChars.length} 文字`}
+          </p>
+        </footer>
+      </section>
+    );
+  }
+
   return (
     <section className="study">
       {header}
@@ -189,7 +302,8 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
               dragRef.current.suppressClick = false;
               return;
             }
-            setRevealed((value) => !value);
+            if (revealed) setRevealed(false);
+            else reveal();
           }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -197,7 +311,7 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
           onPointerCancel={(event) => endDrag(event, true)}
           role="button"
           tabIndex={-1}
-          aria-label={revealed ? "タップで問題面に戻る。左スワイプでもう一度、右スワイプで普通" : "タップで答えを表示"}
+          aria-label={revealed ? "タップで問題面に戻る。左スワイプでもう一度、右スワイプで答えるまでの速さに応じた評価" : "タップで答えを表示"}
         >
           <div
             className={`drag-layer${dragX === 0 ? " drag-settle" : ""}`}
@@ -223,7 +337,8 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
           )}
           {dragX > 12 && (
             <div className="swipe-badge swipe-badge-right" style={{ opacity: Math.min(1, dragX / SWIPE_THRESHOLD) }}>
-              普通{intervals ? `・${intervals[3]}` : ""}
+              {RATING_LABELS[swipeRating()]}
+              {intervals ? `・${intervals[swipeRating()]}` : ""}
             </div>
           )}
         </div>
@@ -232,7 +347,7 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
         {error && <p className="notice warning">{error}</p>}
         {revealed ? (
           <div className="rating-buttons">
-            {RATING_LABELS.map(({ rating, label, className }) => (
+            {ANSWER_BUTTONS.map(({ rating, label, className }) => (
               <button key={rating} type="button" className={className} disabled={saving} onClick={() => void handleRate(rating)}>
                 <span className="rating-label">{label}</span>
                 <span className="rating-interval">{intervals?.[rating]}</span>
@@ -240,12 +355,12 @@ export function StudyView({ deck, initialProgress, onClose }: StudyViewProps) {
             ))}
           </div>
         ) : (
-          <button type="button" className="primary reveal-button" onClick={() => setRevealed(true)}>
+          <button type="button" className="primary reveal-button" onClick={reveal}>
             答えを表示
           </button>
         )}
         <p className="muted study-remaining">
-          残り {queue.length} 枚{revealed ? "・スワイプ: ← もう一度 / 普通 →" : ""}
+          残り {queue.length} 枚{revealed ? "・スワイプ: ← もう一度 / 速さで評価 →" : ""}
         </p>
       </footer>
     </section>

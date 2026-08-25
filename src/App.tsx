@@ -3,10 +3,19 @@ import { readProgress, upsertDeckCacheEntry } from "./db";
 import { DeckDetailView } from "./DeckDetailView";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue } from "./srs";
-import { loadMotionPreference, loadToken } from "./storage";
+import {
+  loadMotionPreference,
+  loadSessionSize,
+  loadStudyMode,
+  loadToken,
+  saveSessionSize,
+  saveStudyMode,
+  SESSION_SIZES,
+  type SessionSize,
+} from "./storage";
 import { SettingsView } from "./SettingsView";
 import { StudyView } from "./StudyView";
-import type { DeckSnapshot, ProgressRecord } from "./types";
+import type { DeckSnapshot, ProgressRecord, StudyMode } from "./types";
 
 interface DeckStats {
   due: number;
@@ -32,7 +41,7 @@ function Donut({ percent }: { percent: number }) {
 
 type View =
   | { type: "home" }
-  | { type: "study"; deckId: string; progress: ProgressRecord[] }
+  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize }
   | { type: "deck"; deckId: string }
   | { type: "settings" };
 
@@ -47,6 +56,10 @@ export function App() {
   const [stats, setStats] = useState<Map<string, DeckStats>>(new Map());
   const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState<View>({ type: "home" });
+  // 学習開始シート（モードと枚数を選んでから始める）
+  const [startingDeckId, setStartingDeckId] = useState<string | null>(null);
+  const [startMode, setStartMode] = useState<StudyMode>(loadStudyMode);
+  const [startSize, setStartSize] = useState<SessionSize>(loadSessionSize);
 
   const updateStats = useCallback(async (target: DeckSnapshot) => {
     const now = new Date();
@@ -104,8 +117,12 @@ export function App() {
     };
   }, [refresh, updateStats]);
 
-  async function startStudy(deckId: string) {
-    setView({ type: "study", deckId, progress: await readProgress(deckId) });
+  async function startStudy(deckId: string, mode: StudyMode, sessionSize: SessionSize) {
+    // 次回の既定値として選択を覚えておく
+    saveStudyMode(mode);
+    saveSessionSize(sessionSize);
+    setStartingDeckId(null);
+    setView({ type: "study", deckId, progress: await readProgress(deckId), mode, sessionSize });
   }
 
   function closeStudy() {
@@ -161,7 +178,13 @@ export function App() {
     if (entry) {
       return (
         <main className="app study-app">
-          <StudyView deck={entry.deck} initialProgress={view.progress} onClose={closeStudy} />
+          <StudyView
+            deck={entry.deck}
+            initialProgress={view.progress}
+            mode={view.mode}
+            sessionSize={view.sessionSize}
+            onClose={closeStudy}
+          />
         </main>
       );
     }
@@ -211,7 +234,7 @@ export function App() {
                   </button>
                   <div className="deck-card-side">
                     {deckStats && <Donut percent={deckStats.learnedPercent} />}
-                    <button type="button" className="primary" disabled={studyCount === 0} onClick={() => void startStudy(entry.deckId)}>
+                    <button type="button" className="primary" disabled={studyCount === 0} onClick={() => setStartingDeckId(entry.deckId)}>
                       {studyCount === 0 ? "完了" : "学習する"}
                     </button>
                   </div>
@@ -220,6 +243,45 @@ export function App() {
             })}
           </ul>
         </>
+      )}
+      {startingDeckId !== null && (
+        <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="学習を開始">
+          <div className="sheet">
+            <h2>学習を開始</h2>
+            <div className="sheet-field">
+              <span className="sheet-label">モード</span>
+              <div className="segmented">
+                <button type="button" aria-pressed={startMode === "normal"} onClick={() => setStartMode("normal")}>
+                  通常
+                </button>
+                <button type="button" aria-pressed={startMode === "buzzer"} onClick={() => setStartMode("buzzer")}>
+                  早押し
+                </button>
+              </div>
+            </div>
+            <div className="sheet-field">
+              <span className="sheet-label">枚数</span>
+              <div className="segmented">
+                {SESSION_SIZES.map((size) => (
+                  <button key={size} type="button" aria-pressed={startSize === size} onClick={() => setStartSize(size)}>
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="muted">
+              {startMode === "buzzer"
+                ? "問題文が1文字ずつ表示されます。押した時点で止まり、答え合わせは自己申告です。"
+                : "答えを表示したあと、左スワイプで「もう一度」、右スワイプは答えるまでの速さで自動評価します。"}
+            </p>
+            <div className="button-row">
+              <button type="button" className="primary" onClick={() => void startStudy(startingDeckId, startMode, startSize)}>
+                開始
+              </button>
+              <button type="button" onClick={() => setStartingDeckId(null)}>キャンセル</button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
