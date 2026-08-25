@@ -70,11 +70,14 @@ export function previewIntervals(progress: ProgressDTO | null, now: Date): Recor
   return result;
 }
 
-/** 既定の振り分け境界（秒）。実際に使って調整する前提の仮置きで、設定画面から変更できる */
-export const DEFAULT_RATING_THRESHOLDS: RatingThresholds = { easy: 2, good: 5, hard: 10 };
+/**
+ * 既定の振り分け境界（秒）。実際に使って調整する前提の仮置きで、設定画面から変更できる。
+ * 問題が出てから答えを表示してスワイプするまでを測るので、答え表示起点より長めに取る。
+ */
+export const DEFAULT_RATING_THRESHOLDS: RatingThresholds = { easy: 5, good: 10, hard: 20 };
 
 /**
- * 答えを表示してからスワイプするまでの経過時間を4評価へ振り分ける。
+ * 問題が表示されてからスワイプするまでの経過時間を4評価へ振り分ける。
  * 即答＝簡単、迷うほど評価が下がり、hard 以上かかったら「もう一度」。
  */
 export function ratingFromElapsed(elapsedMs: number, thresholds: RatingThresholds): ReviewRating {

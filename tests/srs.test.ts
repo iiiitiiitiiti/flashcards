@@ -150,7 +150,16 @@ describe("buildStudyQueue", () => {
 });
 
 describe("ratingFromElapsed / normalizeRatingThresholds", () => {
-  const thresholds = DEFAULT_RATING_THRESHOLDS;
+  // 既定値が変わっても境界の意味が壊れていないことを見るため、境界は明示して渡す
+  const thresholds = { easy: 2, good: 5, hard: 10 };
+
+  it("既定の境界は昇順で、問題表示からの秒数として現実的な範囲にある", () => {
+    const { easy, good, hard } = DEFAULT_RATING_THRESHOLDS;
+    expect(easy).toBeLessThan(good);
+    expect(good).toBeLessThan(hard);
+    expect(ratingFromElapsed((easy - 0.1) * 1000, DEFAULT_RATING_THRESHOLDS)).toBe(4);
+    expect(ratingFromElapsed(hard * 1000, DEFAULT_RATING_THRESHOLDS)).toBe(1);
+  });
 
   it("即答は「簡単」、迷うほど評価が下がる", () => {
     expect(ratingFromElapsed(0, thresholds)).toBe(4);

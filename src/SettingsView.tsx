@@ -189,7 +189,7 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
         </div>
         <span className="sheet-label">右スワイプの評価に使う秒数</span>
         <p className="muted">
-          答えを表示してからスワイプするまでの時間で評価が決まります。この秒数より速ければその評価になります。
+          問題が表示されてからスワイプするまでの時間で評価が決まります（答えを見ている時間も含みます）。この秒数より速ければその評価になります。
         </p>
         <div className="threshold-row">
           {([
