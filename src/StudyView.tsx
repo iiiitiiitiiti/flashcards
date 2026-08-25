@@ -51,8 +51,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
 
   const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
   const [revealed, setRevealed] = useState(false);
-  /** 答えを表示した時刻。スワイプまでの経過時間で評価を振り分けるのに使う */
-  const [revealedAt, setRevealedAt] = useState<number | null>(null);
+  /** 問題を表示した時刻。スワイプまでの経過時間で評価を振り分けるのに使う */
+  const [shownAt, setShownAt] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reviewedCount, setReviewedCount] = useState(0);
@@ -76,7 +76,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
   const [buzzedAt, setBuzzedAt] = useState<number | null>(null);
 
   useEffect(() => {
-    // カードが変わったら読み上げを最初から
+    // カードが変わったら計測を開始し、読み上げも最初から
+    setShownAt(Date.now());
     setShownChars(0);
     setBuzzedAt(null);
   }, [current, reviewedCount]);
@@ -126,15 +127,13 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
     else if (dx >= SWIPE_THRESHOLD) void handleRate(swipeRating());
   }
 
-  /** 右スワイプの評価。答えを表示してからの経過時間で 簡単/普通/難しい/もう一度 を決める */
+  /** 右スワイプの評価。問題が表示されてからの経過時間で 簡単/普通/難しい/もう一度 を決める */
   function swipeRating(): ReviewRating {
-    if (revealedAt === null) return 3;
-    return ratingFromElapsed(Date.now() - revealedAt, thresholds);
+    return ratingFromElapsed(Date.now() - shownAt, thresholds);
   }
 
   function reveal() {
     setRevealed(true);
-    setRevealedAt(Date.now());
   }
 
   /** 早押し: 読み上げを止めて答えを表示する */
@@ -186,7 +185,6 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
       return rating === 1 ? [...rest, { card: current.card, isNew: false }] : rest;
     });
     setRevealed(false);
-    setRevealedAt(null);
     setSaving(false);
   }
 
@@ -311,7 +309,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
           onPointerCancel={(event) => endDrag(event, true)}
           role="button"
           tabIndex={-1}
-          aria-label={revealed ? "タップで問題面に戻る。左スワイプでもう一度、右スワイプで答えるまでの速さに応じた評価" : "タップで答えを表示"}
+          aria-label={revealed ? "タップで問題面に戻る。左スワイプでもう一度、右スワイプは問題が出てから答えるまでの速さで評価" : "タップで答えを表示"}
         >
           <div
             className={`drag-layer${dragX === 0 ? " drag-settle" : ""}`}
