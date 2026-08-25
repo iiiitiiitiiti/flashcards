@@ -3,6 +3,7 @@ import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
 import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readImportDraft, readProgress, saveImportDraft } from "./db";
 import { appendCards, upsertCard } from "./deckedit";
+import { buildPageItems, CARDS_PER_PAGE, clampPage } from "./pagination";
 import { writeDeck } from "./github";
 import { loadToken } from "./storage";
 import type { ImportDraft, ProgressRecord } from "./types";
@@ -44,6 +45,7 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   const [importResumed, setImportResumed] = useState(false);
   const csvInputRef = useRef<HTMLInputElement>(null);
   const [progressByCard, setProgressByCard] = useState<Map<string, ProgressRecord>>(new Map());
+  const [page, setPage] = useState(1);
   const canEdit = loadToken() !== "";
 
   useEffect(() => {
@@ -80,6 +82,57 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
       return [card.front, card.back, card.note ?? ""].some((text) => text.toLowerCase().includes(keyword));
     });
   }, [deck, search, tagFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(visibleCards.length / CARDS_PER_PAGE));
+  const currentPage = clampPage(page, pageCount);
+  const pagedCards = useMemo(
+    () => visibleCards.slice((currentPage - 1) * CARDS_PER_PAGE, currentPage * CARDS_PER_PAGE),
+    [visibleCards, currentPage],
+  );
+
+  useEffect(() => {
+    // 絞り込みを変えたら先頭ページへ戻す
+    setPage(1);
+  }, [search, tagFilter, deck.id]);
+
+  function goToPage(next: number) {
+    setPage(clampPage(next, pageCount));
+    // ページを変えたら一覧の先頭が見えるようにする
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  const pager =
+    pageCount > 1 ? (
+      <nav className="pager" aria-label="カード一覧のページ">
+        <button type="button" className="pager-step" disabled={currentPage === 1} onClick={() => goToPage(currentPage - 1)} aria-label="前のページ">
+          ‹
+        </button>
+        {buildPageItems(currentPage, pageCount).map((item, index) =>
+          item === null ? (
+            <span key={`gap-${index}`} className="pager-gap" aria-hidden="true">…</span>
+          ) : (
+            <button
+              key={item}
+              type="button"
+              className="pager-page"
+              aria-current={item === currentPage ? "page" : undefined}
+              onClick={() => goToPage(item)}
+            >
+              {item}
+            </button>
+          ),
+        )}
+        <button
+          type="button"
+          className="pager-step"
+          disabled={currentPage === pageCount}
+          onClick={() => goToPage(currentPage + 1)}
+          aria-label="次のページ"
+        >
+          ›
+        </button>
+      </nav>
+    ) : null;
 
   function openEditor(card: DeckCard | null) {
     setMessage(null);
@@ -194,10 +247,15 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   return (
     <section>
       <header className="app-header">
+        <button type="button" className="icon-button" onClick={onClose} aria-label="戻る">←</button>
         <h1>{deck.name}</h1>
-        <button type="button" onClick={onClose}>戻る</button>
       </header>
-      <p className="muted">全 {deck.cards.length} 枚{canEdit ? "" : "（閲覧のみ。編集にはトークン設定が必要）"}</p>
+      <p className="muted">
+        全 {deck.cards.length} 枚
+        {visibleCards.length !== deck.cards.length ? `（該当 ${visibleCards.length} 枚）` : ""}
+        {pageCount > 1 ? `・${currentPage}/${pageCount} ページ` : ""}
+        {canEdit ? "" : "（閲覧のみ。編集にはトークン設定が必要）"}
+      </p>
       {message && <p className="notice">{message}</p>}
 
       {editor ? (
@@ -285,8 +343,9 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
         </div>
       )}
 
+      {pager}
       <ul className="card-list">
-        {visibleCards.map((card) => {
+        {pagedCards.map((card) => {
           const record = progressByCard.get(card.id);
           const phase = record?.progress.reps ?? 0;
           const stable = record?.progress.state === FSRS_STATE_REVIEW;
@@ -319,6 +378,7 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
         })}
         {visibleCards.length === 0 && <li className="muted">該当するカードがありません。</li>}
       </ul>
+      {pager}
       <div className="deck-footer">
         <button type="button" onClick={() => void handleResetDeckProgress()}>このデッキの学習進捗をリセット</button>
         <p className="muted">この端末の学習記録だけを消します。カードは消えません。</p>

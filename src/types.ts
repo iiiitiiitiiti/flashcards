@@ -26,6 +26,18 @@ export interface ProgressRecord {
 
 export type ReviewRating = 1 | 2 | 3 | 4;
 
+/** 答えを表示してからスワイプするまでの秒数を4評価へ振り分ける境界（秒・昇順） */
+export interface RatingThresholds {
+  /** これ未満なら「簡単」 */
+  easy: number;
+  /** これ未満なら「普通」 */
+  good: number;
+  /** これ未満なら「難しい」。以上は「もう一度」 */
+  hard: number;
+}
+
+export type StudyMode = "normal" | "buzzer";
+
 export interface ReviewLogEntry {
   reviewId: string;
   deckId: string;
