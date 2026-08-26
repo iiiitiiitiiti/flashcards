@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ReviewRating, StudyMode } from "./types";
 
 /** このセッションで評価した1枚ぶんの記録 */
@@ -17,6 +18,10 @@ export interface SessionEntry {
 interface StudyResultProps {
   mode: StudyMode;
   entries: SessionEntry[];
+  /** デッキ全体の達成率（フェーズ合計 ÷ 満点） */
+  percent: number;
+  /** このセッションで進んだフェーズの合計 */
+  phaseGain: number;
   /** セッションを途中で止めたのか、キューを最後までやり切ったのか */
   reason: "interrupted" | "completed";
   /** まだ学習できるカードが残っているか */
@@ -46,24 +51,53 @@ const RATING_CLASSES: Record<ReviewRating, string> = {
   4: "result-chip-easy",
 };
 
-/** 達成率に応じた一言。数字だけだと続けるかどうかの判断材料にならないため */
-function comment(percent: number, mode: StudyMode): string[] {
-  if (percent >= 90) {
-    return mode === "buzzer"
-      ? ["ほとんど正解できていますね！", "この問題集はもう自分のものです！"]
-      : ["すぐにわかった問題が多いですね！", "暗記は順調に進んでいます！"];
-  }
-  if (percent >= 70) return ["いい調子です！", "あと少しで全部が身につきます"];
-  if (percent >= 40) return ["半分は思い出せています", "くり返すほど間隔が延びていきます"];
-  return ["ここからが伸びどころです", "間をあけて何度も出てくるので大丈夫"];
+/**
+ * 達成率に応じた一言。デッキ全体の進み具合を見た文言にする
+ * （セッション単体の出来ではないので「今回よくできた」とは書かない）
+ */
+function comment(percent: number, phaseGain: number): string[] {
+  const gained = phaseGain > 0 ? `今回のぶんで ${phaseGain} フェーズ進みました` : "";
+  if (percent >= 90) return ["このデッキはほぼ完成です！", gained || "仕上げの復習を続けましょう"];
+  if (percent >= 60) return ["大半が身についてきました", gained || "この調子で続けましょう"];
+  if (percent >= 30) return ["着実に積み上がっています", gained || "くり返すほど間隔が延びます"];
+  if (percent >= 5) return ["少しずつ定着してきました", gained || "毎日の積み重ねが効きます"];
+  return ["まだ始まったばかりです", gained || "くり返すほど伸びます"];
 }
 
-/** 半円ゲージ。0〜100% を左から右へ塗る */
+/** 0 から目標値へ数字を動かす。アプリの「動きを減らす」設定では即座に確定する */
+function useCountUp(target: number, durationMs = 900): number {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (document.documentElement.dataset.motion === "crossfade") {
+      setValue(target);
+      return;
+    }
+    let frame = 0;
+    const start = performance.now();
+    const step = (now: number) => {
+      const ratio = Math.min(1, (now - start) / durationMs);
+      // easeOutCubic。最後にゆっくり止まるほうが数字を読み取りやすい
+      setValue(target * (1 - Math.pow(1 - ratio, 3)));
+      if (ratio < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [target, durationMs]);
+  return value;
+}
+
+/** 小さい値でも進みが見えるように、10%未満は小数第1位まで出す */
+function formatPercent(value: number): string {
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
+}
+
+/** 半円ゲージ。0〜100% を左から右へ塗る。表示時に 0 から目標値まで動く */
 function Gauge({ percent }: { percent: number }) {
   const radius = 90;
   const length = Math.PI * radius;
+  const shown = useCountUp(percent);
   return (
-    <div className="gauge" role="img" aria-label={`達成率 ${percent}%`}>
+    <div className="gauge" role="img" aria-label={`達成率 ${formatPercent(percent)}%`}>
       <svg viewBox="0 0 220 130" className="gauge-svg" aria-hidden="true">
         <defs>
           <linearGradient id="gauge-stroke" x1="0" y1="0" x2="1" y2="0">
@@ -84,21 +118,19 @@ function Gauge({ percent }: { percent: number }) {
           stroke="url(#gauge-stroke)"
           strokeWidth="18"
           strokeLinecap="round"
-          strokeDasharray={`${(length * percent) / 100} ${length}`}
+          strokeDasharray={`${(length * shown) / 100} ${length}`}
         />
       </svg>
       <div className="gauge-value">
         <span className="gauge-caption">達成率</span>
-        <strong>{percent}%</strong>
+        <strong>{formatPercent(shown)}%</strong>
       </div>
     </div>
   );
 }
 
-export function StudyResult({ mode, entries, reason, canContinue, onContinue, onFinish }: StudyResultProps) {
+export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, onContinue, onFinish }: StudyResultProps) {
   const labels = mode === "buzzer" ? BUZZER_RATING_LABELS : RATING_LABELS;
-  const cleared = entries.filter((entry) => entry.rating >= 3).length;
-  const percent = entries.length === 0 ? 0 : Math.round((cleared / entries.length) * 100);
 
   return (
     <div className="result-scroll">
@@ -108,7 +140,7 @@ export function StudyResult({ mode, entries, reason, canContinue, onContinue, on
           <p className="result-comment">まだ1枚も評価していません</p>
         ) : (
           <p className="result-comment">
-            {comment(percent, mode).map((line) => (
+            {comment(percent, phaseGain).map((line) => (
               <span key={line}>{line}</span>
             ))}
           </p>

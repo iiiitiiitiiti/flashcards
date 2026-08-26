@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Deck } from "../src/deck";
 import {
+  achievementPercent,
   buildStudyQueue,
   dayKey,
   DEFAULT_RATING_THRESHOLDS,
@@ -202,5 +203,31 @@ describe("shuffled", () => {
     const source = Array.from({ length: 100 }, (_, i) => i);
     const results = Array.from({ length: 5 }, () => shuffled(source).join(","));
     expect(results.some((r) => r !== source.join(","))).toBe(true);
+  });
+});
+
+describe("achievementPercent", () => {
+  it("全カードがフェーズ10なら100%、未学習だけなら0%", () => {
+    expect(achievementPercent([10, 10, 10], 3)).toBe(100);
+    expect(achievementPercent([0, 0, 0], 3)).toBe(0);
+  });
+
+  it("フェーズ合計 ÷ (枚数 × 10) で計算する", () => {
+    expect(achievementPercent([5, 5], 2)).toBe(50);
+    expect(achievementPercent([1], 2)).toBe(5);
+    expect(achievementPercent([10, 0, 0, 0], 4)).toBe(25);
+  });
+
+  it("フェーズ10を超えても満点扱いにし、100%を超えない", () => {
+    expect(achievementPercent([30, 30], 2)).toBe(100);
+    expect(achievementPercent([20, 0], 2)).toBe(50);
+  });
+
+  it("カードが0枚なら0%（0除算しない）", () => {
+    expect(achievementPercent([], 0)).toBe(0);
+  });
+
+  it("負のフェーズは0として扱う", () => {
+    expect(achievementPercent([-5, 10], 2)).toBe(50);
   });
 });

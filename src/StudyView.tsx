@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
-import { buildStudyQueue, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, shuffled } from "./srs";
+import { achievementPercent, buildStudyQueue, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
 import type { ProgressRecord, ReviewRating, StudyMode, StudyOrder } from "./types";
@@ -259,11 +259,16 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   }
 
   if (result !== null) {
+    // デッキ全体の達成率。セッション中の評価も progressRef に入っているので最新の値になる
+    const phases = deck.cards.map((card) => progressRef.current.get(card.id)?.progress.reps ?? 0);
+    const phaseGain = sessionLog.reduce((total, entry) => total + (entry.toPhase - entry.fromPhase), 0);
     return (
       <section className="study study-result">
         {header}
         <StudyResult
           mode={mode}
+          percent={achievementPercent(phases, deck.cards.length)}
+          phaseGain={phaseGain}
           entries={sessionLog}
           reason={result}
           canContinue={result === "interrupted" ? true : availableCount > reviewedCount}
