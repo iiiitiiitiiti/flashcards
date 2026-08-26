@@ -224,12 +224,12 @@ export function saveDeckSort(value: DeckSort): void {
 
 const STUDY_ORDER_KEY = "flashcards:study-order";
 
-/** 出題順。既定は順番どおり（復習→新規のデッキ順） */
+/** 出題順。既定はランダム（数千問のデッキで先頭ばかり出るのを避けるため） */
 export function loadStudyOrder(): StudyOrder {
   try {
-    return localStorage.getItem(STUDY_ORDER_KEY) === "random" ? "random" : "sequential";
+    return localStorage.getItem(STUDY_ORDER_KEY) === "sequential" ? "sequential" : "random";
   } catch {
-    return "sequential";
+    return "random";
   }
 }
 
@@ -237,6 +237,6 @@ export function saveStudyOrder(value: StudyOrder): void {
   try {
     localStorage.setItem(STUDY_ORDER_KEY, value);
   } catch {
-    // 保存できなくても既定（順番どおり）で動く
+    // 保存できなくても既定（ランダム）で動く
   }
 }

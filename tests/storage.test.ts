@@ -11,7 +11,7 @@ Object.defineProperty(globalThis, "localStorage", {
     clear: () => store.clear(),
   },
 });
-import { loadNewCardsPerDay, loadSessionSize, saveNewCardsPerDay } from "../src/storage";
+import { loadNewCardsPerDay, loadSessionSize, loadStudyOrder, saveNewCardsPerDay, saveStudyOrder } from "../src/storage";
 import { NEW_CARDS_PER_DAY } from "../src/srs";
 
 describe("loadNewCardsPerDay", () => {
@@ -39,5 +39,27 @@ describe("loadNewCardsPerDay", () => {
 
   it("学習枚数も未設定なら既定（20枚）を返す", () => {
     expect(loadSessionSize()).toBe(20);
+  });
+});
+
+describe("loadStudyOrder", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("未設定ならランダム", () => {
+    expect(loadStudyOrder()).toBe("random");
+  });
+
+  it("保存した値を返す", () => {
+    saveStudyOrder("sequential");
+    expect(loadStudyOrder()).toBe("sequential");
+    saveStudyOrder("random");
+    expect(loadStudyOrder()).toBe("random");
+  });
+
+  it("壊れた値はランダムへ落とす", () => {
+    localStorage.setItem("flashcards:study-order", "でたらめ");
+    expect(loadStudyOrder()).toBe("random");
   });
 });
