@@ -11,7 +11,7 @@ Object.defineProperty(globalThis, "localStorage", {
     clear: () => store.clear(),
   },
 });
-import { loadNewCardsPerDay, loadSessionSize, loadStudyOrder, saveNewCardsPerDay, saveStudyOrder } from "../src/storage";
+import { loadNewCardsPerDay, loadSessionSize, loadStudyOrder, loadStudyTag, saveNewCardsPerDay, saveStudyOrder, saveStudyTag } from "../src/storage";
 import { NEW_CARDS_PER_DAY } from "../src/srs";
 
 describe("loadNewCardsPerDay", () => {
@@ -61,5 +61,38 @@ describe("loadStudyOrder", () => {
   it("壊れた値はランダムへ落とす", () => {
     localStorage.setItem("flashcards:study-order", "でたらめ");
     expect(loadStudyOrder()).toBe("random");
+  });
+});
+
+describe("loadStudyTag / saveStudyTag", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("未設定なら null（全タグ）", () => {
+    expect(loadStudyTag("quiz-sports")).toBeNull();
+  });
+
+  it("デッキごとに別々に覚える", () => {
+    saveStudyTag("quiz-sports", "難易度A");
+    saveStudyTag("quiz-rikei", "物理");
+    expect(loadStudyTag("quiz-sports")).toBe("難易度A");
+    expect(loadStudyTag("quiz-rikei")).toBe("物理");
+    expect(loadStudyTag("quiz-chiri")).toBeNull();
+  });
+
+  it("null と空文字は保存せず消す（全タグへ戻す）", () => {
+    saveStudyTag("quiz-sports", "難易度A");
+    saveStudyTag("quiz-sports", null);
+    expect(loadStudyTag("quiz-sports")).toBeNull();
+
+    saveStudyTag("quiz-sports", "難易度A");
+    saveStudyTag("quiz-sports", "");
+    expect(loadStudyTag("quiz-sports")).toBeNull();
+  });
+
+  it("保存済みの空文字も null として読む", () => {
+    localStorage.setItem("flashcards:study-tag:quiz-sports", "");
+    expect(loadStudyTag("quiz-sports")).toBeNull();
   });
 });

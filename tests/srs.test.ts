@@ -240,3 +240,70 @@ describe("retentionPercent（定着率）", () => {
     expect(retentionPercent([review(-5), review(10)], 2)).toBe(50);
   });
 });
+
+describe("buildStudyQueue のタグ絞り込み", () => {
+  function taggedDeck(cards: Record<string, string[]>): Deck {
+    return {
+      schemaVersion: 1,
+      id: "deck",
+      name: "テスト",
+      cards: Object.entries(cards).map(([id, tags]) => ({ id, front: `Q${id}`, back: `A${id}`, tags })),
+    };
+  }
+
+  const deck = taggedDeck({ a: ["難易度A", "地理"], b: ["難易度B"], c: ["難易度A"] });
+
+  it("タグを指定すると、そのタグのカードだけを新規に出す", () => {
+    const queue = buildStudyQueue(deck, [], NOW, 10, "難易度A");
+    expect(queue.fresh.map((card) => card.id)).toEqual(["a", "c"]);
+  });
+
+  it("復習キューも同じタグで絞る", () => {
+    const records = [
+      record("a", {}, { due: NOW.getTime() - 1000 }),
+      record("b", {}, { due: NOW.getTime() - 5000 }),
+    ];
+    const queue = buildStudyQueue(deck, records, NOW, 10, "難易度A");
+    expect(queue.due.map((card) => card.id)).toEqual(["a"]);
+  });
+
+  it("null と空文字は絞り込まない（select の未選択）", () => {
+    expect(buildStudyQueue(deck, [], NOW, 10, null).fresh).toHaveLength(3);
+    expect(buildStudyQueue(deck, [], NOW, 10, "").fresh).toHaveLength(3);
+  });
+
+  it("どのカードも持たないタグでは0枚になる", () => {
+    const queue = buildStudyQueue(deck, [], NOW, 10, "存在しない");
+    expect(queue.due).toHaveLength(0);
+    expect(queue.fresh).toHaveLength(0);
+    expect(queue.freshHeldBack).toBe(0);
+  });
+
+  it("タグを持たないカードは、タグ指定時に必ず外れる", () => {
+    const mixed: Deck = {
+      schemaVersion: 1,
+      id: "deck",
+      name: "テスト",
+      cards: [{ id: "a", front: "Q", back: "A" }, { id: "b", front: "Q", back: "A", tags: ["理科"] }],
+    };
+    expect(buildStudyQueue(mixed, [], NOW, 10, "理科").fresh.map((card) => card.id)).toEqual(["b"]);
+  });
+
+  it("新規の1日上限はデッキ全体で数える（タグを変えても枠は増えない）", () => {
+    const today = dayKey(NOW);
+    // 今日すでに他のタグで2枚導入している
+    const introduced = [
+      record("b", { introducedDayKey: today }),
+      record("x", { introducedDayKey: today }),
+    ];
+    const queue = buildStudyQueue(deck, introduced, NOW, 3, "難易度A");
+    expect(queue.fresh.map((card) => card.id)).toEqual(["a"]);
+    expect(queue.freshHeldBack).toBe(1);
+  });
+
+  it("全角・絵文字のタグでも一致する", () => {
+    const emoji = taggedDeck({ a: ["★難しい"], b: ["👨‍👩‍👧‍👦家族"] });
+    expect(buildStudyQueue(emoji, [], NOW, 10, "👨‍👩‍👧‍👦家族").fresh.map((card) => card.id)).toEqual(["b"]);
+    expect(buildStudyQueue(emoji, [], NOW, 10, "★難しい").fresh.map((card) => card.id)).toEqual(["a"]);
+  });
+});
