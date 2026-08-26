@@ -50,6 +50,11 @@ export interface ReviewLogEntry {
   cardId: string;
   rating: ReviewRating;
   reviewedAt: number;
+  /**
+   * 問題が出てから評価するまでの時間。統計の「プレイ時間」に使う。
+   * 2026-08-26 より前のログには無い（省略可）。放置ぶんを含めないよう上限で切ってある
+   */
+  elapsedMs?: number;
 }
 
 /** カードに自分で書いたメモ。デッキ JSON の note（出典側の補足）とは別物 */

@@ -53,6 +53,9 @@ function HideIcon() {
   );
 }
 
+/** 1枚に費やした時間として数える上限（これを超える分は放置とみなす） */
+const MAX_ELAPSED_MS = 5 * 60 * 1000;
+
 interface QueueItem {
   card: DeckCard;
   isNew: boolean;
@@ -349,6 +352,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         cardId: target.card.id,
         rating,
         reviewedAt: now.getTime(),
+        // 席を外したぶんまで足すと「プレイ時間」が実態と合わなくなるので上限で切る
+        elapsedMs: Math.min(Math.max(0, now.getTime() - shownAt), MAX_ELAPSED_MS),
       });
     } catch (error) {
       setError(describeStorageError(error, "進捗を保存"));

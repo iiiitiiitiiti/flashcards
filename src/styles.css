@@ -55,6 +55,45 @@ body {
   padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
+/* 下ナビのぶんだけ本文の下を空ける（最後の要素がナビに隠れないように） */
+.app-with-nav {
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+}
+
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nav-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 6px 4px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nav-tab-current {
+  color: var(--color-primary);
+}
+
 .app-header {
   display: flex;
   align-items: center;
@@ -76,15 +115,16 @@ body {
 /* 丸い戻るボタン（テキストではなく ○ の中に ←） */
 .icon-button {
   flex: none;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  min-height: 38px;
   padding: 0;
   border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 17px;
   line-height: 1;
 }
 
@@ -113,12 +153,14 @@ h2 {
 
 button {
   font: inherit;
+  /* 全体的に一回り小さく（2026-08-26 ユーザー指定）。タップ領域は 38px を下限にする */
+  font-size: 14px;
   color: var(--color-primary);
   background: var(--color-surface);
   border: 1px solid var(--color-primary-soft);
   border-radius: 8px;
-  min-height: 44px;
-  padding: 10px 16px;
+  min-height: 38px;
+  padding: 8px 14px;
   cursor: pointer;
 }
 
@@ -301,7 +343,7 @@ body.study-lock {
 .app-header-centered,
 .study-header-row {
   display: grid;
-  grid-template-columns: 44px 1fr 44px;
+  grid-template-columns: 38px 1fr 38px;
   align-items: center;
   gap: 12px;
 }
@@ -558,10 +600,10 @@ body.study-lock {
 }
 
 .card-action {
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  min-height: 40px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
   padding: 0;
   border-radius: 999px;
   display: flex;
@@ -610,14 +652,14 @@ body.study-lock {
 
 .buzz-resume {
   flex: none;
-  min-height: 56px;
+  min-height: 48px;
   white-space: nowrap;
 }
 
 .reveal-button {
   width: 100%;
-  min-height: 56px;
-  font-size: 17px;
+  min-height: 48px;
+  font-size: 15px;
 }
 
 .rating-buttons {
@@ -633,14 +675,14 @@ body.study-lock {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-height: 56px;
-  padding: 8px 4px;
+  min-height: 48px;
+  padding: 6px 4px;
   color: #ffffff;
   border: none;
 }
 
 .rating-label {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -938,7 +980,8 @@ textarea {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  /* 下ナビ（20）より手前。同じ値だと後から描かれるナビがボタンを覆う */
+  z-index: 30;
   background: rgba(63, 70, 77, 0.35);
   display: flex;
   align-items: flex-end;
@@ -1059,9 +1102,9 @@ textarea {
 }
 
 .pager button {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 8px 10px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px 8px;
 }
 
 .pager .pager-page[aria-current="page"] {
@@ -1168,7 +1211,7 @@ textarea {
 }
 
 .result-continue {
-  min-height: 52px;
+  min-height: 46px;
   font-weight: 700;
 }
 
@@ -1278,4 +1321,126 @@ textarea {
 .result-phase strong {
   color: var(--color-primary);
   font-size: 16px;
+}
+
+/* ===== 統計 ===== */
+
+.calendar {
+  margin: 16px 0 8px;
+}
+
+.calendar-head {
+  display: grid;
+  grid-template-columns: 38px 1fr 38px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.calendar-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-weekdays span {
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-muted);
+  padding-bottom: 4px;
+}
+
+.calendar-cell {
+  position: relative;
+  aspect-ratio: 1;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+
+.calendar-blank {
+  visibility: hidden;
+}
+
+/* 学習した日は下に点を打つ */
+.calendar-dot {
+  position: absolute;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
+.calendar-cell-today {
+  border-color: var(--color-primary-soft);
+}
+
+.calendar-cell-selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+  font-weight: 700;
+}
+
+.calendar-cell-selected .calendar-dot {
+  background: var(--color-on-primary);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.stat-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-primary);
+}
+
+.stat-icon {
+  display: flex;
+  color: var(--color-muted);
+}
+
+.stat-value strong {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.stats-note {
+  font-size: 12px;
+  margin-top: 16px;
 }
