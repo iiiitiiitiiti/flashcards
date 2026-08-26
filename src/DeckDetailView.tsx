@@ -276,7 +276,7 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
 
   return (
     <section>
-      <header className="app-header">
+      <header className="app-header app-header-centered">
         <button type="button" className="icon-button" onClick={onClose} aria-label="戻る">←</button>
         <h1>{deck.name}</h1>
       </header>
