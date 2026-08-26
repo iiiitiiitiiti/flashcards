@@ -183,7 +183,10 @@ const NEW_CARDS_PER_DAY_KEY = "flashcards:new-cards-per-day";
 /** 1日に出す新規カードの上限（0 は無制限） */
 export function loadNewCardsPerDay(): number {
   try {
-    const value = Number(localStorage.getItem(NEW_CARDS_PER_DAY_KEY));
+    // 未設定（null）を Number() に通すと 0 =「無制限」になってしまうので先に弾く
+    const stored = localStorage.getItem(NEW_CARDS_PER_DAY_KEY);
+    if (stored === null) return NEW_CARDS_PER_DAY;
+    const value = Number(stored);
     return (NEW_CARDS_PER_DAY_OPTIONS as readonly number[]).includes(value) ? value : NEW_CARDS_PER_DAY;
   } catch {
     return NEW_CARDS_PER_DAY;
