@@ -30,6 +30,29 @@ interface StudyViewProps {
   onClose: (restart: boolean) => void;
 }
 
+/** メモのアイコン（書類＋ペン）。色はボタンの文字色に従う */
+function NoteIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8" />
+      <path d="M14 3v5h5" />
+      <path d="M20.4 12.6a1.9 1.9 0 0 1 0 2.7l-4.6 4.6-2.8.6.6-2.8 4.6-4.6a1.9 1.9 0 0 1 2.2-.5z" />
+    </svg>
+  );
+}
+
+/** 非表示のアイコン（目に斜線） */
+function HideIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.6 6.2A9.7 9.7 0 0 1 12 6.1c5 0 9 4.4 9 5.9a10 10 0 0 1-2.5 3.2" />
+      <path d="M6.3 7.9C4.2 9.2 3 10.9 3 12c0 1.5 4 5.9 9 5.9 1.6 0 3-.4 4.3-1.1" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+      <path d="M3.5 3.5l17 17" />
+    </svg>
+  );
+}
+
 interface QueueItem {
   card: DeckCard;
   isNew: boolean;
@@ -371,30 +394,18 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const header = (
     <header className="study-header">
       <div className="study-header-row">
-        <h1>{deck.name}{mode === "buzzer" ? "（早押し）" : ""}</h1>
-        {result === null && current && (
-          <>
-            <button
-              type="button"
-              className={`icon-button${notes.has(current.card.id) ? " icon-button-on" : ""}`}
-              aria-label={notes.has(current.card.id) ? "メモを編集" : "メモを書く"}
-              onClick={() => setNoteEditing({ cardId: current.card.id, text: notes.get(current.card.id) ?? "" })}
-            >
-              🖉
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="このカードを非表示にする"
-              onClick={() => setHideTarget(current.card.id)}
-            >
-              🚫
-            </button>
-          </>
-        )}
         {result === null && (
-          <button type="button" disabled={saving} onClick={() => setResult("interrupted")}>中断</button>
+          <button
+            type="button"
+            className="icon-button"
+            disabled={saving}
+            aria-label="学習を中断して結果を見る"
+            onClick={() => setResult("interrupted")}
+          >
+            ←
+          </button>
         )}
+        <h1>{deck.name}{mode === "buzzer" ? "（早押し）" : ""}</h1>
       </div>
       <div
         className="progress-track"
@@ -463,6 +474,28 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
 
   if (!current) return null;
 
+  /** カードへの操作（メモ・非表示）。ヘッダーではなくカードの上に置く */
+  const cardActions = result === null && current && (
+    <div className="card-actions">
+      <button
+        type="button"
+        className={`card-action${notes.has(current.card.id) ? " card-action-on" : ""}`}
+        aria-label={notes.has(current.card.id) ? "メモを編集" : "メモを書く"}
+        onClick={() => setNoteEditing({ cardId: current.card.id, text: notes.get(current.card.id) ?? "" })}
+      >
+        <NoteIcon />
+      </button>
+      <button
+        type="button"
+        className="card-action"
+        aria-label="このカードを非表示にする"
+        onClick={() => setHideTarget(current.card.id)}
+      >
+        <HideIcon />
+      </button>
+    </div>
+  );
+
   /** メモ入力と非表示の確認。どちらの学習画面でも同じものを重ねる */
   const dialogs = (
     <>
@@ -504,6 +537,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
       <section className="study">
         {dialogs}
         {header}
+        {cardActions}
         <div className="study-scroll">
           <div
             key={`${reviewedCount}-${current.card.id}`}
@@ -609,6 +643,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     <section className="study">
       {dialogs}
       {header}
+      {cardActions}
       <div className="study-scroll">
         {/* key でカードごとに再マウントし、入場アニメーションを発火させる（ロジックはアニメに依存しない） */}
         <div

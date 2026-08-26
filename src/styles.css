@@ -212,8 +212,9 @@ button.primary {
   line-height: 1.4;
 }
 
-/* 説明文はデッキ名より一段引く（一覧で目に入るのはデッキ名でよい） */
-.deck-card-description {
+/* 説明文と最終学習はデッキ名より一段引く（一覧で目に入るのはデッキ名でよい） */
+.deck-card-description,
+.deck-last-studied {
   font-size: 12px;
   line-height: 1.4;
   color: var(--color-muted);
@@ -297,9 +298,9 @@ body.study-lock {
 }
 
 .study-header-row {
+  /* 他の画面のヘッダーと同じ並び（丸い ← のすぐ右にタイトル） */
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
 
@@ -307,6 +308,7 @@ body.study-lock {
   margin: 4px 0;
   font-size: 17px;
   line-height: 1.3;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -534,21 +536,31 @@ body.study-lock {
   font-weight: 600;
 }
 
-/* 学習中のメモ・非表示アイコン。ヘッダーの右端（中断ボタンの手前）へ寄せる */
-.study-header-row .icon-button {
+/* カードへの操作（メモ・非表示）。ヘッダーではなくカードの上へ右寄せで置く */
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+
+.card-action {
   width: 40px;
   min-width: 40px;
   height: 40px;
-  font-size: 17px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.study-header-row h1 + .icon-button {
-  margin-left: auto;
-}
-
-.icon-button-on {
+/* メモがあるカードは塗りを変えて、書いてあることが分かるようにする */
+.card-action-on {
   border-color: var(--color-primary);
-  background: var(--color-chip-new-bg);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 /* 非表示にしたカードの一覧（既定では畳んでおく） */
