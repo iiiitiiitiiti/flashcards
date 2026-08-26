@@ -4,6 +4,7 @@ import { saveReview } from "./db";
 import { achievementPercent, buildStudyQueue, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
+import { splitGraphemes } from "./text";
 import type { ProgressRecord, ReviewRating, StudyMode, StudyOrder } from "./types";
 
 interface StudyViewProps {
@@ -82,7 +83,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   const current = queue[0];
 
   // 早押し: 問題文を1文字ずつ送り、押した時点で止める
-  const buzzerChars = useMemo(() => (current ? Array.from(current.card.front) : []), [current]);
+  const buzzerChars = useMemo(() => (current ? splitGraphemes(current.card.front) : []), [current]);
   const [shownChars, setShownChars] = useState(0);
   const [buzzedAt, setBuzzedAt] = useState<number | null>(null);
 
@@ -114,7 +115,10 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
 
   // 左右スワイプ評価（答え表示中のみ）。左=もう一度、右=経過秒数で自動振り分け
   const SWIPE_THRESHOLD = 80;
+  /** 確定後にカードが飛んでいく時間。CSS の .drag-fly と揃える */
+  const FLY_OUT_MS = 260;
   const [dragX, setDragX] = useState(0);
+  const [flying, setFlying] = useState(false);
   const dragRef = useRef({ pointerId: -1, startX: 0, startY: 0, horizontal: false, suppressClick: false });
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -144,10 +148,29 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     if (drag.pointerId !== event.pointerId) return;
     drag.pointerId = -1;
     const dx = event.clientX - drag.startX;
-    setDragX(0);
+    const decided = !cancelled && drag.horizontal && Math.abs(dx) >= SWIPE_THRESHOLD;
+    // 確定するときは指の位置から続けて飛ばすので、ここでは戻さない
+    if (!decided) setDragX(0);
     if (cancelled || !drag.horizontal) return;
-    if (dx <= -SWIPE_THRESHOLD) void handleRate(1);
-    else if (dx >= SWIPE_THRESHOLD) void handleRate(mode === "buzzer" ? 3 : swipeRating());
+    if (dx <= -SWIPE_THRESHOLD) flyOut(-1, 1);
+    else if (dx >= SWIPE_THRESHOLD) flyOut(1, mode === "buzzer" ? 3 : swipeRating());
+  }
+
+  /** 指を離した位置からカードを画面外へ送り出し、飛び切ってから評価を確定する */
+  function flyOut(direction: 1 | -1, rating: ReviewRating) {
+    if (!current || ratingLockRef.current) return;
+    ratingLockRef.current = true;
+    if (document.documentElement.dataset.motion === "crossfade") {
+      void handleRate(rating);
+      return;
+    }
+    setFlying(true);
+    setDragX(direction * (window.innerWidth + 200));
+    window.setTimeout(() => {
+      setFlying(false);
+      setDragX(0);
+      void handleRate(rating);
+    }, FLY_OUT_MS);
   }
 
   /** 右スワイプの評価。問題が表示されてからの経過時間で 簡単/普通/難しい/もう一度 を決める */
@@ -186,9 +209,19 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     [current, revealed],
   );
 
-  async function handleRate(rating: ReviewRating) {
+  /** 評価の入口。ここでだけロックを取り、以降は handleRate が解除まで持つ */
+  function requestRate(rating: ReviewRating) {
     if (!current || ratingLockRef.current) return;
     ratingLockRef.current = true;
+    void handleRate(rating);
+  }
+
+  /** ロックを保持した状態で呼ぶこと（requestRate / flyOut 経由） */
+  async function handleRate(rating: ReviewRating) {
+    if (!current) {
+      ratingLockRef.current = false;
+      return;
+    }
     // 対象カードをローカルに固定する（保存中に current が差し替わっても取り違えない）
     const target = current;
     setSaving(true);
@@ -343,8 +376,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
             }
           >
             <div
-              className={`drag-layer${dragX === 0 ? " drag-settle" : ""}`}
-              style={{ transform: dragX === 0 ? undefined : `translateX(${dragX}px) rotate(${dragX * 0.04}deg)` }}
+              className={`drag-layer${flying ? " drag-fly" : dragX === 0 ? " drag-settle" : ""}`}
+              style={{
+                transform:
+                  dragX === 0 ? undefined : `translateX(${dragX}px) translateY(${Math.abs(dragX) * 0.06}px) rotate(${dragX * 0.06}deg)`,
+              }}
             >
               <div className="study-card buzzer-card">
                 <span className="study-card-chip">
@@ -382,7 +418,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
           {revealed ? (
             <div className="rating-buttons">
               {BUZZER_BUTTONS.map(({ rating, label, className }) => (
-                <button key={rating} type="button" className={className} disabled={saving} onClick={() => void handleRate(rating)}>
+                <button key={rating} type="button" className={className} disabled={saving} onClick={() => requestRate(rating)}>
                   <span className="rating-label">{label}</span>
                   <span className="rating-interval">{intervals?.[rating]}</span>
                 </button>
@@ -432,8 +468,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
           aria-label={revealed ? "タップで問題面に戻る。左スワイプでもう一度、右スワイプは問題が出てから答えるまでの速さで評価" : "タップで答えを表示"}
         >
           <div
-            className={`drag-layer${dragX === 0 ? " drag-settle" : ""}`}
-            style={{ transform: dragX === 0 ? undefined : `translateX(${dragX}px) rotate(${dragX * 0.04}deg)` }}
+            className={`drag-layer${flying ? " drag-fly" : dragX === 0 ? " drag-settle" : ""}`}
+            style={{
+              transform:
+                dragX === 0 ? undefined : `translateX(${dragX}px) translateY(${Math.abs(dragX) * 0.06}px) rotate(${dragX * 0.06}deg)`,
+            }}
           >
             <div className={`flip-inner${revealed ? " flipped" : ""}`}>
               <div className="study-card flip-face flip-front" aria-hidden={revealed}>
@@ -469,7 +508,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
         {revealed ? (
           <div className="rating-buttons">
             {ANSWER_BUTTONS.map(({ rating, label, className }) => (
-              <button key={rating} type="button" className={className} disabled={saving} onClick={() => void handleRate(rating)}>
+              <button key={rating} type="button" className={className} disabled={saving} onClick={() => requestRate(rating)}>
                 <span className="rating-label">{label}</span>
                 <span className="rating-interval">{intervals?.[rating]}</span>
               </button>
