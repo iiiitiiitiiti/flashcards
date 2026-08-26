@@ -49,7 +49,7 @@ function Donut({ percent }: { percent: number }) {
 
 type View =
   | { type: "home" }
-  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder }
+  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder; sessionId: number }
   | { type: "deck"; deckId: string }
   | { type: "settings" };
 
@@ -68,6 +68,8 @@ export function App() {
   const [startingDeckId, setStartingDeckId] = useState<string | null>(null);
   const [startMode, setStartMode] = useState<StudyMode>(loadStudyMode);
   const [startOrder, setStartOrder] = useState<StudyOrder>(loadStudyOrder);
+  // セッションごとに StudyView を作り直すための連番（key に使う）
+  const [sessionId, setSessionId] = useState(0);
   const [deckSearch, setDeckSearch] = useState("");
   const [deckSort, setDeckSort] = useState<DeckSort>(loadDeckSort);
   const [startSize, setStartSize] = useState<SessionSize>(loadSessionSize);
@@ -163,10 +165,17 @@ export function App() {
     saveSessionSize(sessionSize);
     saveStudyOrder(order);
     setStartingDeckId(null);
-    setView({ type: "study", deckId, progress: await readProgress(deckId), mode, sessionSize, order });
+    const progress = await readProgress(deckId);
+    setSessionId((id) => id + 1);
+    setView({ type: "study", deckId, progress, mode, sessionSize, order, sessionId: sessionId + 1 });
   }
 
-  function closeStudy() {
+  function closeStudy(restart: boolean) {
+    if (restart && view.type === "study") {
+      // 同じ設定のまま、最新の進捗でセッションを組み直す
+      void startStudy(view.deckId, view.mode, view.sessionSize, view.order);
+      return;
+    }
     setView({ type: "home" });
     if (snapshot) void updateStats(snapshot);
   }
@@ -220,6 +229,7 @@ export function App() {
       return (
         <main className="app study-app">
           <StudyView
+            key={view.sessionId}
             deck={entry.deck}
             initialProgress={view.progress}
             mode={view.mode}

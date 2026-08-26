@@ -102,7 +102,8 @@ export function normalizeRatingThresholds(value: Partial<RatingThresholds> | nul
   return { easy, good, hard };
 }
 
-function formatInterval(ms: number): string {
+/** ミリ秒を「7日」「3か月」のような目安表記にする */
+export function formatInterval(ms: number): string {
   const minutes = ms / 60_000;
   if (minutes < 60) return `${Math.max(1, Math.round(minutes))}分`;
   const hours = minutes / 60;
