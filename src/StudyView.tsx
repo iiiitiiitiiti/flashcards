@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Deck, DeckCard } from "./deck";
-import { saveReview } from "./db";
+import { saveCardNote, saveReview, setCardHidden } from "./db";
 import { describeStorageError } from "./quota";
 import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
@@ -22,6 +22,10 @@ interface StudyViewProps {
   tag: string | null;
   /** 全デッキ合計で数えるときの、開始時点で使った新規枠。デッキごとの設定なら undefined */
   usedNewCardsToday?: number;
+  /** カードごとの自分のメモ（カード id → 本文）。開始時点のスナップショット */
+  initialNotes: Map<string, string>;
+  /** カードを非表示にしたときに親へ伝える（一覧と統計を作り直すため） */
+  onHide: (cardId: string) => void;
   /** 学習を終える。restart が true なら同じ設定でもう一度始める */
   onClose: (restart: boolean) => void;
 }
@@ -49,7 +53,7 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, usedNewCardsToday, onClose }: StudyViewProps) {
+export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, usedNewCardsToday, initialNotes, onHide, onClose }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
     const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay(), tag, usedNewCardsToday);
     const items = [
@@ -74,6 +78,12 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   /** リザルトに出す、このセッションで評価したカードの記録 */
   const [sessionLog, setSessionLog] = useState<SessionEntry[]>([]);
   const [result, setResult] = useState<"interrupted" | "completed" | null>(null);
+  /** カード id → 自分のメモ。書き換えたらこの Map を差し替える */
+  const [notes, setNotes] = useState<Map<string, string>>(initialNotes);
+  /** メモ入力を開いているカード。null なら閉じている */
+  const [noteEditing, setNoteEditing] = useState<{ cardId: string; text: string } | null>(null);
+  /** 非表示の確認を出しているカード */
+  const [hideTarget, setHideTarget] = useState<string | null>(null);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
   const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
   // 評価の多重実行を止める。state の saving は再レンダーまで false のままなので排他にならない
@@ -215,6 +225,14 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   }
 
   /** 早押しのタップ: 1回目で読み上げを止め、2回目で答えを表示する */
+  /** 押して止めた文字送りを再開する（答えるためではなく、考えるために止めたとき） */
+  function resumeBuzzer() {
+    if (buzzedAt === null) return;
+    // 押した位置から続ける（止めたあとに送り過ぎないよう明示的に戻す）
+    setShownChars(buzzedAt);
+    setBuzzedAt(null);
+  }
+
   function handleBuzzerTap() {
     if (revealed) return;
     if (buzzedAt === null) setBuzzedAt(shownChars);
@@ -230,6 +248,43 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     () => (current && revealed ? previewIntervals(progressRef.current.get(current.card.id)?.progress ?? null, new Date()) : null),
     [current, revealed],
   );
+
+  /** メモを閉じるときに保存する。空にしたら削除される */
+  async function closeNote() {
+    const editing = noteEditing;
+    setNoteEditing(null);
+    if (!editing) return;
+    const text = editing.text.trim();
+    if ((notes.get(editing.cardId) ?? "") === text) return;
+    try {
+      await saveCardNote(deck.id, editing.cardId, text);
+      setNotes((previous) => {
+        const next = new Map(previous);
+        if (text === "") next.delete(editing.cardId);
+        else next.set(editing.cardId, text);
+        return next;
+      });
+    } catch (error) {
+      setError(describeStorageError(error, "メモを保存"));
+    }
+  }
+
+  /** 出題から外す。評価はせず、そのカードをキューから抜くだけ（進捗は残す） */
+  async function hideCard(cardId: string) {
+    setHideTarget(null);
+    try {
+      await setCardHidden(deck.id, cardId, true);
+    } catch (error) {
+      setError(describeStorageError(error, "非表示に"));
+      return;
+    }
+    onHide(cardId);
+    setQueue((items) => items.filter((item) => item.card.id !== cardId));
+    setRevealed(false);
+    setShownAt(Date.now());
+    setShownChars(0);
+    setBuzzedAt(null);
+  }
 
   /** 評価の入口。ここでだけロックを取り、以降は handleRate が解除まで持つ */
   function requestRate(rating: ReviewRating) {
@@ -317,6 +372,26 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     <header className="study-header">
       <div className="study-header-row">
         <h1>{deck.name}{mode === "buzzer" ? "（早押し）" : ""}</h1>
+        {result === null && current && (
+          <>
+            <button
+              type="button"
+              className={`icon-button${notes.has(current.card.id) ? " icon-button-on" : ""}`}
+              aria-label={notes.has(current.card.id) ? "メモを編集" : "メモを書く"}
+              onClick={() => setNoteEditing({ cardId: current.card.id, text: notes.get(current.card.id) ?? "" })}
+            >
+              🖉
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="このカードを非表示にする"
+              onClick={() => setHideTarget(current.card.id)}
+            >
+              🚫
+            </button>
+          </>
+        )}
         {result === null && (
           <button type="button" disabled={saving} onClick={() => setResult("interrupted")}>中断</button>
         )}
@@ -388,9 +463,46 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
 
   if (!current) return null;
 
+  /** メモ入力と非表示の確認。どちらの学習画面でも同じものを重ねる */
+  const dialogs = (
+    <>
+      {noteEditing !== null && (
+        <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="メモ">
+          <div className="sheet">
+            <h2>メモ</h2>
+            <textarea
+              className="note-input"
+              value={noteEditing.text}
+              placeholder="メモを入力"
+              autoFocus
+              rows={5}
+              onChange={(event) => setNoteEditing({ ...noteEditing, text: event.target.value })}
+            />
+            <button type="button" className="primary" onClick={() => void closeNote()}>
+              とじる
+            </button>
+          </div>
+        </div>
+      )}
+      {hideTarget !== null && (
+        <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="このクイズを非表示にしますか？">
+          <div className="sheet">
+            <p className="hide-message">このクイズを非表示にしますか？</p>
+            <p className="muted">出題されなくなります。カード一覧の「非表示のカード」からいつでも戻せます。</p>
+            <div className="button-row">
+              <button type="button" onClick={() => setHideTarget(null)}>キャンセル</button>
+              <button type="button" className="primary" onClick={() => void hideCard(hideTarget)}>非表示にする</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   if (mode === "buzzer") {
     return (
       <section className="study">
+        {dialogs}
         {header}
         <div className="study-scroll">
           <div
@@ -434,6 +546,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
                     <hr />
                     <div className="study-back">{current.card.back}</div>
                     {current.card.note && <div className="study-note muted">{current.card.note}</div>}
+                    {notes.has(current.card.id) && <div className="study-memo">{notes.get(current.card.id)}</div>}
                   </>
                 ) : (
                   <div className="study-front buzzer-text">
@@ -471,9 +584,16 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
               押す
             </button>
           ) : (
-            <button type="button" className="primary reveal-button" onClick={reveal}>
-              答えを表示
-            </button>
+            <div className="buzzer-actions">
+              {buzzedAt < buzzerChars.length && (
+                <button type="button" className="buzz-resume" onClick={resumeBuzzer}>
+                  つづきを読む
+                </button>
+              )}
+              <button type="button" className="primary reveal-button" onClick={reveal}>
+                答えを表示
+              </button>
+            </div>
           )}
           <p className="muted study-remaining">
             残り {queue.length} 枚
@@ -487,6 +607,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
 
   return (
     <section className="study">
+      {dialogs}
       {header}
       <div className="study-scroll">
         {/* key でカードごとに再マウントし、入場アニメーションを発火させる（ロジックはアニメに依存しない） */}
@@ -529,6 +650,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
                 <hr />
                 <div className="study-back">{current.card.back}</div>
                 {current.card.note && <div className="study-note muted">{current.card.note}</div>}
+                {notes.has(current.card.id) && <div className="study-memo">{notes.get(current.card.id)}</div>}
               </div>
             </div>
           </div>

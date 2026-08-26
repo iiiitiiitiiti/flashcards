@@ -1,18 +1,23 @@
 import { getDb } from "./db";
 import { validateProgressDTO } from "./srs";
-import type { ProgressRecord, ReviewLogEntry, ReviewRating } from "./types";
+import type { CardNote, HiddenCard, ProgressRecord, ReviewLogEntry, ReviewRating } from "./types";
 
 export interface BackupDocument {
   schemaVersion: 1;
   exportedAt: number;
   cardProgress: ProgressRecord[];
   reviewLog: ReviewLogEntry[];
+  /** 2026-08-26 以降に書き出したファイルにだけ入る（古いバックアップも読めるよう省略可） */
+  cardNotes?: CardNote[];
+  hiddenCards?: HiddenCard[];
 }
 
 export interface ImportResult {
   progressImported: number;
   progressSkipped: number;
   logsImported: number;
+  notesImported: number;
+  hiddenImported: number;
 }
 
 export interface BackupExport {
@@ -20,6 +25,7 @@ export interface BackupExport {
   exportedAt: number;
   progressCount: number;
   logCount: number;
+  noteCount: number;
 }
 
 /**
@@ -32,11 +38,15 @@ export async function exportBackup(exportedAt = Date.now()): Promise<BackupExpor
   const progressCount = await appendAll("cardProgress", parts);
   parts.push('],\n  "reviewLog": [');
   const logCount = await appendAll("reviewLog", parts);
+  parts.push('],\n  "cardNotes": [');
+  const noteCount = await appendAll("cardNotes", parts);
+  parts.push('],\n  "hiddenCards": [');
+  await appendAll("hiddenCards", parts);
   parts.push("]\n}\n");
-  return { blob: new Blob(parts, { type: "application/json" }), exportedAt, progressCount, logCount };
+  return { blob: new Blob(parts, { type: "application/json" }), exportedAt, progressCount, logCount, noteCount };
 }
 
-async function appendAll(storeName: "cardProgress" | "reviewLog", parts: string[]): Promise<number> {
+async function appendAll(storeName: "cardProgress" | "reviewLog" | "cardNotes" | "hiddenCards", parts: string[]): Promise<number> {
   const db = await getDb();
   let count = 0;
   let cursor = await db.transaction(storeName).store.openCursor();
@@ -64,7 +74,32 @@ export function validateBackup(value: unknown): BackupDocument {
   }
   document.cardProgress.forEach((entry, index) => validateProgressRecord(entry, index));
   document.reviewLog.forEach((entry, index) => validateReviewLogEntry(entry, index));
+  // 古いバックアップには無い。あるなら中身も見る
+  validateOptionalRows(document.cardNotes, "cardNotes", (row, label) => {
+    if (typeof row.text !== "string") throw new Error(`${label}: text が不正です`);
+  });
+  validateOptionalRows(document.hiddenCards, "hiddenCards", (row, label) => {
+    if (typeof row.hiddenAt !== "number" || !Number.isFinite(row.hiddenAt)) throw new Error(`${label}: hiddenAt が不正です`);
+  });
   return document as unknown as BackupDocument;
+}
+
+/** cardNotes / hiddenCards の共通チェック。未指定（古いバックアップ）は素通りさせる */
+function validateOptionalRows(
+  value: unknown,
+  field: string,
+  check: (row: Record<string, unknown>, label: string) => void,
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) throw new Error(`${field} が配列ではありません`);
+  value.forEach((entry, index) => {
+    const label = `${field}[${index}]`;
+    if (!entry || typeof entry !== "object") throw new Error(`${label} がオブジェクトではありません`);
+    const row = entry as Record<string, unknown>;
+    if (typeof row.deckId !== "string" || row.deckId === "") throw new Error(`${label}: deckId が不正です`);
+    if (typeof row.cardId !== "string" || row.cardId === "") throw new Error(`${label}: cardId が不正です`);
+    check(row, label);
+  });
 }
 
 function validateProgressRecord(value: unknown, index: number): asserts value is ProgressRecord {
@@ -96,11 +131,12 @@ function validateReviewLogEntry(value: unknown, index: number): asserts value is
  * バックアップをマージ取り込みする。
  * - 進捗はカード単位で updatedAt が新しい方を採用（同時刻は既存を維持）
  * - reviewLog は reviewId で重複を除いて追記
+ * - メモは updatedAt が新しい方を採用、非表示は追記のみ（別端末での解除は持ち込まない）
  */
 export async function importBackup(value: unknown): Promise<ImportResult> {
   const backup = validateBackup(value);
   const db = await getDb();
-  const tx = db.transaction(["cardProgress", "reviewLog"], "readwrite");
+  const tx = db.transaction(["cardProgress", "reviewLog", "cardNotes", "hiddenCards"], "readwrite");
   const progressStore = tx.objectStore("cardProgress");
   const logStore = tx.objectStore("reviewLog");
 
@@ -124,6 +160,24 @@ export async function importBackup(value: unknown): Promise<ImportResult> {
     logsImported += 1;
   }
 
+  // メモは updatedAt が新しい方を残す。非表示は「取り込んだ側も非表示にする」だけ（解除は持ち込まない）
+  let notesImported = 0;
+  const noteStore = tx.objectStore("cardNotes");
+  for (const note of backup.cardNotes ?? []) {
+    const existing = await noteStore.get([note.deckId, note.cardId]);
+    if (existing && existing.updatedAt >= note.updatedAt) continue;
+    await noteStore.put(note);
+    notesImported += 1;
+  }
+
+  let hiddenImported = 0;
+  const hiddenStore = tx.objectStore("hiddenCards");
+  for (const row of backup.hiddenCards ?? []) {
+    if ((await hiddenStore.getKey([row.deckId, row.cardId])) !== undefined) continue;
+    await hiddenStore.put(row);
+    hiddenImported += 1;
+  }
+
   await tx.done;
-  return { progressImported, progressSkipped, logsImported };
+  return { progressImported, progressSkipped, logsImported, notesImported, hiddenImported };
 }

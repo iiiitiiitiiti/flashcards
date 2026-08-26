@@ -52,6 +52,21 @@ export interface ReviewLogEntry {
   reviewedAt: number;
 }
 
+/** カードに自分で書いたメモ。デッキ JSON の note（出典側の補足）とは別物 */
+export interface CardNote {
+  deckId: string;
+  cardId: string;
+  text: string;
+  updatedAt: number;
+}
+
+/** 出題から外したカード。時事ネタが古くなったときなどに使う */
+export interface HiddenCard {
+  deckId: string;
+  cardId: string;
+  hiddenAt: number;
+}
+
 export interface DeckCacheEntry {
   deckId: string;
   deck: Deck;
