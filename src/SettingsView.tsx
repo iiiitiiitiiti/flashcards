@@ -118,7 +118,7 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   async function handleExport() {
     setBackupMessage(null);
     try {
-      const { blob, exportedAt, progressCount, logCount } = await exportBackup();
+      const { blob, exportedAt, progressCount, logCount, noteCount } = await exportBackup();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       const stamp = new Date(exportedAt).toISOString().slice(0, 10);
@@ -129,7 +129,7 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
       saveLastBackupAt(exportedAt);
       setLastBackupAt(exportedAt);
-      setBackupMessage(`進捗 ${progressCount} 件・ログ ${logCount} 件（${formatBytes(blob.size)}）を書き出しました。`);
+      setBackupMessage(`進捗 ${progressCount} 件・ログ ${logCount} 件・メモ ${noteCount} 件（${formatBytes(blob.size)}）を書き出しました。`);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "エクスポートに失敗しました。");
     }
@@ -140,7 +140,9 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
     try {
       const parsed: unknown = JSON.parse(await file.text());
       const result = await importBackup(parsed);
-      setBackupMessage(`インポート完了: 進捗 ${result.progressImported} 件更新・${result.progressSkipped} 件スキップ・ログ ${result.logsImported} 件追加。`);
+      setBackupMessage(
+        `インポート完了: 進捗 ${result.progressImported} 件更新・${result.progressSkipped} 件スキップ・ログ ${result.logsImported} 件追加・メモ ${result.notesImported} 件・非表示 ${result.hiddenImported} 件。`,
+      );
     } catch (error) {
       const reason = isQuotaExceeded(error)
         ? "端末の保存容量が足りません。空きを増やしてからお試しください"

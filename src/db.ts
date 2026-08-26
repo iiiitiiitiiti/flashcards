@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { DeckCacheEntry, ImportDraft, ProgressRecord, ReviewLogEntry } from "./types";
+import type { CardNote, DeckCacheEntry, HiddenCard, ImportDraft, ProgressRecord, ReviewLogEntry } from "./types";
 
 interface FlashcardsDB extends DBSchema {
   cardProgress: {
@@ -20,10 +20,20 @@ interface FlashcardsDB extends DBSchema {
     key: string;
     value: ImportDraft;
   };
+  cardNotes: {
+    key: [string, string];
+    value: CardNote;
+    indexes: { byDeck: string };
+  };
+  hiddenCards: {
+    key: [string, string];
+    value: HiddenCard;
+    indexes: { byDeck: string };
+  };
 }
 
 const DB_NAME = "flashcards-db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const DAY_MS = 86_400_000;
 
 /** 評価ログの保持期間（日）。学習の予定には使っていないので、古いものは消してよい */
@@ -46,6 +56,11 @@ export function getDb(): Promise<IDBPDatabase<FlashcardsDB>> {
       if (oldVersion < 2) {
         // 古いログを日時で引いて消せるようにする（v1 で作った DB にも後付けする）
         tx.objectStore("reviewLog").createIndex("byReviewedAt", "reviewedAt");
+      }
+      if (oldVersion < 3) {
+        // 自分で書いたメモと、出題から外したカード。どちらもデッキ単位で引く
+        db.createObjectStore("cardNotes", { keyPath: ["deckId", "cardId"] }).createIndex("byDeck", "deckId");
+        db.createObjectStore("hiddenCards", { keyPath: ["deckId", "cardId"] }).createIndex("byDeck", "deckId");
       }
     },
   });
@@ -171,4 +186,42 @@ export async function pruneReviewLog(
   }
   await tx.done;
   return deleted;
+}
+
+export async function readCardNotes(deckId: string): Promise<CardNote[]> {
+  const db = await getDb();
+  return db.getAllFromIndex("cardNotes", "byDeck", deckId);
+}
+
+export async function readAllCardNotes(): Promise<CardNote[]> {
+  const db = await getDb();
+  return db.getAll("cardNotes");
+}
+
+/** メモを書き込む。空文字なら削除する（空のメモを持ち歩かない） */
+export async function saveCardNote(deckId: string, cardId: string, text: string): Promise<void> {
+  const db = await getDb();
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    await db.delete("cardNotes", [deckId, cardId]);
+    return;
+  }
+  await db.put("cardNotes", { deckId, cardId, text: trimmed, updatedAt: Date.now() });
+}
+
+export async function readHiddenCards(deckId: string): Promise<HiddenCard[]> {
+  const db = await getDb();
+  return db.getAllFromIndex("hiddenCards", "byDeck", deckId);
+}
+
+export async function readAllHiddenCards(): Promise<HiddenCard[]> {
+  const db = await getDb();
+  return db.getAll("hiddenCards");
+}
+
+/** 出題対象から外す / 戻す。学習進捗は消さないので、戻せば続きから再開できる */
+export async function setCardHidden(deckId: string, cardId: string, hidden: boolean): Promise<void> {
+  const db = await getDb();
+  if (hidden) await db.put("hiddenCards", { deckId, cardId, hiddenAt: Date.now() });
+  else await db.delete("hiddenCards", [deckId, cardId]);
 }

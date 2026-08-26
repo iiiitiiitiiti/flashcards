@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
-import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readImportDraft, readProgress, saveImportDraft } from "./db";
+import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
 import { appendCards, upsertCard } from "./deckedit";
 import { buildPageItems, CARDS_PER_PAGE, clampPage } from "./pagination";
 import { writeDeck } from "./github";
@@ -71,6 +71,27 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
     });
   }, [deck.id]);
 
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    void readHiddenCards(deck.id).then((rows) => setHiddenIds(new Set(rows.map((row) => row.cardId))));
+  }, [deck.id]);
+
+  /** 出題に戻す。非表示にしている間も学習進捗は消していないので、続きから再開できる */
+  async function handleUnhide(cardId: string) {
+    await setCardHidden(deck.id, cardId, false);
+    setHiddenIds((previous) => {
+      const next = new Set(previous);
+      next.delete(cardId);
+      return next;
+    });
+  }
+
+  const hiddenCards = useMemo(
+    () => deck.cards.filter((card) => hiddenIds.has(card.id)),
+    [deck, hiddenIds],
+  );
+
   const allTags = useMemo(() => {
     const tags = new Set<string>();
     for (const card of deck.cards) {
@@ -84,11 +105,13 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   const visibleCards = useMemo(() => {
     const keyword = appliedSearch.trim().toLowerCase();
     return deck.cards.filter((card) => {
+      // 非表示のカードは下の「非表示のカード」へまとめる
+      if (hiddenIds.has(card.id)) return false;
       if (tagFilter && !(card.tags ?? []).includes(tagFilter)) return false;
       if (keyword === "") return true;
       return [card.front, card.back, card.note ?? ""].some((text) => text.toLowerCase().includes(keyword));
     });
-  }, [deck, appliedSearch, tagFilter]);
+  }, [deck, appliedSearch, tagFilter, hiddenIds]);
 
   const pageCount = Math.max(1, Math.ceil(visibleCards.length / CARDS_PER_PAGE));
   const currentPage = clampPage(page, pageCount);
@@ -386,6 +409,23 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
         {visibleCards.length === 0 && <li className="muted">該当するカードがありません。</li>}
       </ul>
       {pager}
+      {hiddenCards.length > 0 && (
+        <details className="hidden-cards">
+          <summary>非表示のカード（{hiddenCards.length}）</summary>
+          <p className="muted">出題されません。「表示に戻す」で元どおり出題されます（学習進捗は残っています）。</p>
+          <ul className="card-list">
+            {hiddenCards.map((card) => (
+              <li key={card.id} className="card-row hidden-card-row">
+                <div className="card-row-button">
+                  <span className="card-front"><span className="qa-mark qa-q">Q</span>{card.front}</span>
+                  <span className="card-back"><span className="qa-mark qa-a">A</span>{card.back}</span>
+                </div>
+                <button type="button" onClick={() => void handleUnhide(card.id)}>表示に戻す</button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <div className="deck-footer">
         <button type="button" onClick={() => void handleResetDeckProgress()}>このデッキの学習進捗をリセット</button>
         <p className="muted">この端末の学習記録だけを消します。カードは消えません。</p>

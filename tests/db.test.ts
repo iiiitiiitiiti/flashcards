@@ -102,6 +102,15 @@ describe("v1 からのスキーマ更新", () => {
     });
   }
 
+  it("v3 で足したストアが使える（v1 から2段引き上げ）", async () => {
+    const legacy = await openV1();
+    legacy.close();
+    const db = await getDb();
+    expect(db.version).toBe(3);
+    expect([...db.objectStoreNames].sort()).toContain("cardNotes");
+    expect([...db.objectStoreNames].sort()).toContain("hiddenCards");
+  });
+
   it("既存データを消さずにインデックスを足し、間引きできるようになる", async () => {
     const legacy = await openV1();
     await new Promise<void>((resolve, reject) => {

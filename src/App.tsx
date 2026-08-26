@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { pruneReviewLog, readAllProgress, readProgress, upsertDeckCacheEntry } from "./db";
+import { pruneReviewLog, readAllHiddenCards, readAllProgress, readCardNotes, readProgress, upsertDeckCacheEntry } from "./db";
 import { requestPersistentStorage } from "./quota";
+import type { Deck } from "./deck";
 import { DeckDetailView } from "./DeckDetailView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
@@ -51,9 +52,15 @@ function Donut({ percent }: { percent: number }) {
 
 type View =
   | { type: "home" }
-  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder; tag: string | null; sessionId: number }
+  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder; tag: string | null; notes: Map<string, string>; sessionId: number }
   | { type: "deck"; deckId: string }
   | { type: "settings" };
+
+/** 非表示のカードを取り除いたデッキ。学習にも統計にも、これを使う */
+function visibleDeck(deck: Deck, hiddenIds: Set<string> | undefined): Deck {
+  if (!hiddenIds || hiddenIds.size === 0) return deck;
+  return { ...deck, cards: deck.cards.filter((card) => !hiddenIds.has(card.id)) };
+}
 
 function formatTimestamp(value: number): string {
   const date = new Date(value);
@@ -80,10 +87,25 @@ export function App() {
   const [startProgress, setStartProgress] = useState<ProgressRecord[] | null>(null);
   /** 全デッキ合計で数えるときの、今日すでに使った新規枠。デッキごとの設定なら undefined */
   const [usedNewCardsToday, setUsedNewCardsToday] = useState<number | undefined>(undefined);
+  /** 出題から外したカード（デッキ id → カード id）。学習にも統計にも出さない */
+  const [hidden, setHidden] = useState<Map<string, Set<string>>>(new Map());
+
+  const refreshHidden = useCallback(async () => {
+    const rows = await readAllHiddenCards();
+    const map = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const set = map.get(row.deckId) ?? new Set<string>();
+      set.add(row.cardId);
+      map.set(row.deckId, set);
+    }
+    setHidden(map);
+    return map;
+  }, []);
 
   const updateStats = useCallback(async (target: DeckSnapshot) => {
     const now = new Date();
     const next = new Map<string, DeckStats>();
+    const hiddenByDeck = await refreshHidden();
     // 全デッキ合計で数えるときは、進捗を1回だけ読んでデッキへ配る
     const allRecords = loadNewCardsScope() === "all" ? await readAllProgress() : null;
     const usedNewCardsToday = allRecords === null ? undefined : countIntroducedToday(allRecords, now);
@@ -92,20 +114,21 @@ export function App() {
       const records = allRecords === null
         ? await readProgress(entry.deckId)
         : allRecords.filter((record) => record.deckId === entry.deckId);
-      const queue = buildStudyQueue(entry.deck, records, now, loadNewCardsPerDay(), null, usedNewCardsToday);
-      const cardIds = new Set(entry.deck.cards.map((card) => card.id));
+      const deck = visibleDeck(entry.deck, hiddenByDeck.get(entry.deckId));
+      const queue = buildStudyQueue(deck, records, now, loadNewCardsPerDay(), null, usedNewCardsToday);
+      const cardIds = new Set(deck.cards.map((card) => card.id));
       // ホームのドーナツとリザルトのゲージで同じ数字を出す（進捗の無いカードは 0 として効くので records だけ渡せばよい）
       const touched = records.filter((record) => cardIds.has(record.cardId)).map((record) => record.progress);
       next.set(entry.deckId, {
         due: queue.due.length,
         fresh: queue.fresh.length,
-        retentionPercent: retentionPercent(touched, entry.deck.cards.length),
+        retentionPercent: retentionPercent(touched, deck.cards.length),
         // 進捗の更新時刻の最大値を「最後に学習した時刻」として扱う
         lastStudiedAt: records.length === 0 ? null : Math.max(...records.map((record) => record.updatedAt)),
       });
     }
     setStats(next);
-  }, []);
+  }, [refreshHidden]);
 
   const applySnapshot = useCallback(
     async (target: DeckSnapshot) => {
@@ -148,27 +171,28 @@ export function App() {
     };
   }, [refresh, updateStats]);
 
-  const startingEntry = useMemo(
-    () => (startingDeckId === null ? null : (snapshot?.decks.find((entry) => entry.deckId === startingDeckId) ?? null)),
-    [snapshot, startingDeckId],
-  );
+  const startingDeck = useMemo(() => {
+    if (startingDeckId === null) return null;
+    const entry = snapshot?.decks.find((candidate) => candidate.deckId === startingDeckId);
+    return entry ? visibleDeck(entry.deck, hidden.get(startingDeckId)) : null;
+  }, [snapshot, startingDeckId, hidden]);
 
   /** 開始シートに出すタグ一覧。カード一覧の絞り込みと同じ並び（日本語順） */
   const startTags = useMemo(() => {
-    if (!startingEntry) return [];
+    if (!startingDeck) return [];
     const tags = new Set<string>();
-    for (const card of startingEntry.deck.cards) {
+    for (const card of startingDeck.cards) {
       for (const tag of card.tags ?? []) tags.add(tag);
     }
     return [...tags].sort((left, right) => left.localeCompare(right, "ja"));
-  }, [startingEntry]);
+  }, [startingDeck]);
 
   /** 選んでいるタグでいま学習できる枚数。進捗を読み終えるまでは null */
   const startCounts = useMemo(() => {
-    if (!startingEntry || startProgress === null) return null;
-    const queue = buildStudyQueue(startingEntry.deck, startProgress, new Date(), loadNewCardsPerDay(), startTag, usedNewCardsToday);
+    if (!startingDeck || startProgress === null) return null;
+    const queue = buildStudyQueue(startingDeck, startProgress, new Date(), loadNewCardsPerDay(), startTag, usedNewCardsToday);
     return { due: queue.due.length, fresh: queue.fresh.length };
-  }, [startingEntry, startProgress, startTag, usedNewCardsToday]);
+  }, [startingDeck, startProgress, startTag, usedNewCardsToday]);
 
   const deckItems = useMemo<(DeckListItem & { entry: DeckCacheEntry })[]>(() => {
     if (!snapshot) return [];
@@ -221,9 +245,10 @@ export function App() {
     saveStudyTag(deckId, tag);
     setStartingDeckId(null);
     const { progress, used } = await readStudyContext(deckId);
+    const notes = new Map((await readCardNotes(deckId)).map((note) => [note.cardId, note.text]));
     setUsedNewCardsToday(used);
     setSessionId((id) => id + 1);
-    setView({ type: "study", deckId, progress, mode, sessionSize, order, tag, sessionId: sessionId + 1 });
+    setView({ type: "study", deckId, progress, mode, sessionSize, order, tag, notes, sessionId: sessionId + 1 });
   }
 
   /** 学習開始シートを開く。タグの初期値は前回の選択（デッキに無いタグなら「全タグ」） */
@@ -298,13 +323,22 @@ export function App() {
         <main className="app study-app">
           <StudyView
             key={view.sessionId}
-            deck={entry.deck}
+            deck={visibleDeck(entry.deck, hidden.get(view.deckId))}
             initialProgress={view.progress}
             mode={view.mode}
             sessionSize={view.sessionSize}
             order={view.order}
             tag={view.tag}
             usedNewCardsToday={usedNewCardsToday}
+            initialNotes={view.notes}
+            onHide={(cardId) => {
+              // 統計とホームの枚数を作り直す。学習中の表示はセッション側が更新済み
+              setHidden((previous) => {
+                const next = new Map(previous);
+                next.set(view.deckId, new Set([...(previous.get(view.deckId) ?? []), cardId]));
+                return next;
+              });
+            }}
             onClose={closeStudy}
           />
         </main>
@@ -363,7 +397,7 @@ export function App() {
                 <li key={entry.deckId} className="deck-card">
                   <button type="button" className="deck-card-body" onClick={() => setView({ type: "deck", deckId: entry.deckId })}>
                     <strong>{entry.deck.name}</strong>
-                    {entry.deck.description && <span className="muted">{entry.deck.description}</span>}
+                    {entry.deck.description && <span className="deck-card-description">{entry.deck.description}</span>}
                     <span className="deck-badges">
                       {deckStats && deckStats.due > 0 && <span className="chip chip-due">復習 {deckStats.due}</span>}
                       {deckStats && deckStats.fresh > 0 && <span className="chip chip-new">新規 {deckStats.fresh}</span>}

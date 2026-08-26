@@ -207,6 +207,18 @@ button.primary {
   box-shadow: var(--shadow-card);
 }
 
+.deck-card-body strong {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+/* 説明文はデッキ名より一段引く（一覧で目に入るのはデッキ名でよい） */
+.deck-card-description {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-muted);
+}
+
 button.deck-card-body {
   display: flex;
   flex-direction: column;
@@ -457,7 +469,8 @@ body.study-lock {
 .study-front {
   font-size: 20px;
   line-height: 1.5;
-  text-align: center;
+  /* 長い問題文は中央揃えだと行頭がばらつく。読み始めの位置を揃える */
+  text-align: left;
   overflow-wrap: anywhere;
 }
 
@@ -472,7 +485,7 @@ body.study-lock {
   font-size: 19px;
   font-weight: 600;
   line-height: 1.5;
-  text-align: center;
+  text-align: left;
   overflow-wrap: anywhere;
   color: var(--color-answer);
 }
@@ -480,7 +493,7 @@ body.study-lock {
 .study-note {
   margin-top: 12px;
   font-size: 14px;
-  text-align: center;
+  text-align: left;
 }
 
 .study-actions {
@@ -488,6 +501,92 @@ body.study-lock {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* 自分で書いたメモ。出典側の補足（.study-note）とは見た目を分ける */
+.study-memo {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--color-chip-new-bg);
+  color: var(--color-chip-new-text);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-input {
+  font: inherit;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: inherit;
+  resize: vertical;
+}
+
+.hide-message {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* 学習中のメモ・非表示アイコン。ヘッダーの右端（中断ボタンの手前）へ寄せる */
+.study-header-row .icon-button {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  font-size: 17px;
+}
+
+.study-header-row h1 + .icon-button {
+  margin-left: auto;
+}
+
+.icon-button-on {
+  border-color: var(--color-primary);
+  background: var(--color-chip-new-bg);
+}
+
+/* 非表示にしたカードの一覧（既定では畳んでおく） */
+.hidden-cards {
+  margin: 16px 0;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  padding: 12px 14px;
+}
+
+.hidden-cards summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.hidden-card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hidden-card-row .card-row-button {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 早押しで止めたあとの2択（つづきを読む / 答えを表示） */
+.buzzer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.buzz-resume {
+  flex: none;
+  min-height: 56px;
+  white-space: nowrap;
 }
 
 .reveal-button {
