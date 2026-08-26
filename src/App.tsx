@@ -403,7 +403,7 @@ export function App() {
                       {deckStats && deckStats.fresh > 0 && <span className="chip chip-new">新規 {deckStats.fresh}</span>}
                       {deckStats && studyCount === 0 && <span className="chip chip-done">今日は完了</span>}
                       <span className="muted">全 {entry.deck.cards.length} 枚</span>
-                      {lastStudiedAt !== null && <span className="muted">最終学習 {formatTimestamp(lastStudiedAt)}</span>}
+                      {lastStudiedAt !== null && <span className="deck-last-studied">最終学習 {formatTimestamp(lastStudiedAt)}</span>}
                     </span>
                   </button>
                   <div className="deck-card-side">
