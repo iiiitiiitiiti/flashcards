@@ -9,6 +9,7 @@ import {
   previewIntervals,
   rate,
   ratingFromElapsed,
+  shuffled,
   validateProgressDTO,
 } from "../src/srs";
 import type { ProgressDTO, ProgressRecord } from "../src/types";
@@ -181,5 +182,25 @@ describe("ratingFromElapsed / normalizeRatingThresholds", () => {
     expect(normalizeRatingThresholds({ easy: 0, good: -1, hard: Number.NaN })).toEqual(DEFAULT_RATING_THRESHOLDS);
     expect(normalizeRatingThresholds({ easy: 8, good: 3, hard: 1 })).toEqual({ easy: 8, good: 8, hard: 8 });
     expect(normalizeRatingThresholds({ easy: 1, good: 9999, hard: 9999 })).toEqual({ easy: 1, good: 600, hard: 600 });
+  });
+});
+
+describe("shuffled", () => {
+  it("元の配列を変えず、要素は過不足なく保たれる", () => {
+    const source = Array.from({ length: 50 }, (_, i) => i);
+    const result = shuffled(source);
+    expect(source).toEqual(Array.from({ length: 50 }, (_, i) => i));
+    expect([...result].sort((a, b) => a - b)).toEqual(source);
+  });
+
+  it("空配列・1要素でも壊れない", () => {
+    expect(shuffled([])).toEqual([]);
+    expect(shuffled(["a"])).toEqual(["a"]);
+  });
+
+  it("十分な長さなら並びが変わる（同一順のままではない）", () => {
+    const source = Array.from({ length: 100 }, (_, i) => i);
+    const results = Array.from({ length: 5 }, () => shuffled(source).join(","));
+    expect(results.some((r) => r !== source.join(","))).toBe(true);
   });
 });

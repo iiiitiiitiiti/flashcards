@@ -1,28 +1,35 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { readProgress, upsertDeckCacheEntry } from "./db";
 import { DeckDetailView } from "./DeckDetailView";
+import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue } from "./srs";
 import {
+  loadDeckSort,
   loadMotionPreference,
   loadNewCardsPerDay,
   loadSessionSize,
+  loadStudyOrder,
   loadStudyMode,
   loadToken,
+  saveDeckSort,
   saveSessionSize,
   saveStudyMode,
+  saveStudyOrder,
   SESSION_SIZES,
   type SessionSize,
 } from "./storage";
 import { SettingsView } from "./SettingsView";
 import { StudyView } from "./StudyView";
-import type { DeckSnapshot, ProgressRecord, StudyMode } from "./types";
+import type { DeckCacheEntry, DeckSnapshot, ProgressRecord, StudyMode, StudyOrder } from "./types";
 
 interface DeckStats {
   due: number;
   fresh: number;
   /** FSRS の Review 状態（定着）に達したカードの割合 */
   learnedPercent: number;
+  /** この端末で最後に学習した時刻。未学習なら null */
+  lastStudiedAt: number | null;
 }
 
 const FSRS_STATE_REVIEW = 2;
@@ -42,7 +49,7 @@ function Donut({ percent }: { percent: number }) {
 
 type View =
   | { type: "home" }
-  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize }
+  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder }
   | { type: "deck"; deckId: string }
   | { type: "settings" };
 
@@ -60,6 +67,9 @@ export function App() {
   // 学習開始シート（モードと枚数を選んでから始める）
   const [startingDeckId, setStartingDeckId] = useState<string | null>(null);
   const [startMode, setStartMode] = useState<StudyMode>(loadStudyMode);
+  const [startOrder, setStartOrder] = useState<StudyOrder>(loadStudyOrder);
+  const [deckSearch, setDeckSearch] = useState("");
+  const [deckSort, setDeckSort] = useState<DeckSort>(loadDeckSort);
   const [startSize, setStartSize] = useState<SessionSize>(loadSessionSize);
 
   const updateStats = useCallback(async (target: DeckSnapshot) => {
@@ -74,6 +84,8 @@ export function App() {
         due: queue.due.length,
         fresh: queue.fresh.length,
         learnedPercent: entry.deck.cards.length === 0 ? 0 : Math.round((learned / entry.deck.cards.length) * 100),
+        // 進捗の更新時刻の最大値を「最後に学習した時刻」として扱う
+        lastStudiedAt: records.length === 0 ? null : Math.max(...records.map((record) => record.updatedAt)),
       });
     }
     setStats(next);
@@ -118,12 +130,40 @@ export function App() {
     };
   }, [refresh, updateStats]);
 
-  async function startStudy(deckId: string, mode: StudyMode, sessionSize: SessionSize) {
+  const deckItems = useMemo<(DeckListItem & { entry: DeckCacheEntry })[]>(() => {
+    if (!snapshot) return [];
+    return snapshot.decks.map((entry) => {
+      const deckStats = stats.get(entry.deckId);
+      return {
+        entry,
+        deckId: entry.deckId,
+        name: entry.deck.name,
+        description: entry.deck.description,
+        cardCount: entry.deck.cards.length,
+        todo: (deckStats?.due ?? 0) + (deckStats?.fresh ?? 0),
+        learnedPercent: deckStats?.learnedPercent ?? 0,
+        lastStudiedAt: deckStats?.lastStudiedAt ?? null,
+      };
+    });
+  }, [snapshot, stats]);
+
+  const visibleDecks = useMemo(
+    () => sortDecks(filterDecks(deckItems, deckSearch), deckSort),
+    [deckItems, deckSearch, deckSort],
+  );
+
+  function handleDeckSortChange(next: DeckSort) {
+    setDeckSort(next);
+    saveDeckSort(next);
+  }
+
+  async function startStudy(deckId: string, mode: StudyMode, sessionSize: SessionSize, order: StudyOrder) {
     // 次回の既定値として選択を覚えておく
     saveStudyMode(mode);
     saveSessionSize(sessionSize);
+    saveStudyOrder(order);
     setStartingDeckId(null);
-    setView({ type: "study", deckId, progress: await readProgress(deckId), mode, sessionSize });
+    setView({ type: "study", deckId, progress: await readProgress(deckId), mode, sessionSize, order });
   }
 
   function closeStudy() {
@@ -184,6 +224,7 @@ export function App() {
             initialProgress={view.progress}
             mode={view.mode}
             sessionSize={view.sessionSize}
+            order={view.order}
             onClose={closeStudy}
           />
         </main>
@@ -217,10 +258,27 @@ export function App() {
           ))}
           {snapshot.decks.length === 0 && !snapshot.offline && <p className="muted">デッキがありません。decks/ に JSON を追加してください。</p>}
           {snapshot.decks.length > 0 && <h2>マイデッキ</h2>}
+          {snapshot.decks.length > 0 && (
+            <div className="deck-toolbar">
+              <input
+                type="text"
+                value={deckSearch}
+                placeholder="デッキを検索"
+                onChange={(event) => setDeckSearch(event.target.value)}
+              />
+              <select value={deckSort} onChange={(event) => handleDeckSortChange(event.target.value as DeckSort)}>
+                {DECK_SORTS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {snapshot.decks.length > 0 && visibleDecks.length === 0 && (
+            <p className="muted">該当するデッキがありません。</p>
+          )}
           <ul className="deck-list">
-            {snapshot.decks.map((entry) => {
+            {visibleDecks.map(({ entry, todo: studyCount, lastStudiedAt }) => {
               const deckStats = stats.get(entry.deckId);
-              const studyCount = (deckStats?.due ?? 0) + (deckStats?.fresh ?? 0);
               return (
                 <li key={entry.deckId} className="deck-card">
                   <button type="button" className="deck-card-body" onClick={() => setView({ type: "deck", deckId: entry.deckId })}>
@@ -231,6 +289,7 @@ export function App() {
                       {deckStats && deckStats.fresh > 0 && <span className="chip chip-new">新規 {deckStats.fresh}</span>}
                       {deckStats && studyCount === 0 && <span className="chip chip-done">今日は完了</span>}
                       <span className="muted">全 {entry.deck.cards.length} 枚</span>
+                      {lastStudiedAt !== null && <span className="muted">最終学習 {formatTimestamp(lastStudiedAt)}</span>}
                     </span>
                   </button>
                   <div className="deck-card-side">
@@ -261,6 +320,17 @@ export function App() {
               </div>
             </div>
             <div className="sheet-field">
+              <span className="sheet-label">出題順</span>
+              <div className="segmented">
+                <button type="button" aria-pressed={startOrder === "sequential"} onClick={() => setStartOrder("sequential")}>
+                  デフォルト
+                </button>
+                <button type="button" aria-pressed={startOrder === "random"} onClick={() => setStartOrder("random")}>
+                  ランダム
+                </button>
+              </div>
+            </div>
+            <div className="sheet-field">
               <span className="sheet-label">枚数</span>
               <div className="segmented">
                 {SESSION_SIZES.map((size) => (
@@ -274,9 +344,12 @@ export function App() {
               {startMode === "buzzer"
                 ? "問題文が1文字ずつ表示されます。押した時点で止まり、答え合わせは自己申告です。"
                 : "答えを表示したあと、左スワイプで「もう一度」、右スワイプは答えるまでの速さで自動評価します。"}
+              {startOrder === "random"
+                ? "出題順はデッキ全体からランダムに選びます。"
+                : "出題順は復習（期限が近い順）→ 新規（デッキの上から順）です。"}
             </p>
             <div className="button-row">
-              <button type="button" className="primary" onClick={() => void startStudy(startingDeckId, startMode, startSize)}>
+              <button type="button" className="primary" onClick={() => void startStudy(startingDeckId, startMode, startSize, startOrder)}>
                 開始
               </button>
               <button type="button" onClick={() => setStartingDeckId(null)}>キャンセル</button>

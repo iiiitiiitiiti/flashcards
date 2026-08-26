@@ -38,6 +38,9 @@ export interface RatingThresholds {
 
 export type StudyMode = "normal" | "buzzer";
 
+/** 出題順。sequential は復習（期限順）→新規（デッキ順）、random はセッション全体をシャッフル */
+export type StudyOrder = "sequential" | "random";
+
 export interface ReviewLogEntry {
   reviewId: string;
   deckId: string;
