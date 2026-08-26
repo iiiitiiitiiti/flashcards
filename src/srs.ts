@@ -142,13 +142,20 @@ export function validateProgressDTO(value: unknown): ProgressDTO {
 /** フェーズ（FSRS の reps）は10を満点として扱う */
 export const PHASE_FULL = 10;
 
+/** FSRS の state。2 = Review（定着） */
+export const FSRS_STATE_REVIEW = 2;
+
 /**
- * デッキ全体の達成率（%）。全カードのフェーズ合計 ÷ (枚数 × 10)。
- * 1セッションの出来ではなく、そのデッキがどこまで積み上がったかを表す。
+ * デッキ全体の達成率（%）。**定着（state=Review）したカードのフェーズ合計 ÷ (枚数 × 10)**。
+ * 満点は「フェーズ10かつ定着」。reps は「もう一度」でも増えるため、定着していないカードは
+ * 数えない（何度も忘れているカードで達成率が上がってしまうのを防ぐ）。
  */
-export function achievementPercent(phases: number[], cardCount: number): number {
+export function achievementPercent(cards: { reps: number; state: number }[], cardCount: number): number {
   if (cardCount <= 0) return 0;
-  const sum = phases.reduce((total, phase) => total + Math.min(Math.max(0, phase), PHASE_FULL), 0);
+  const sum = cards.reduce((total, card) => {
+    if (card.state !== FSRS_STATE_REVIEW) return total;
+    return total + Math.min(Math.max(0, card.reps), PHASE_FULL);
+  }, 0);
   return Math.min(100, (sum / (cardCount * PHASE_FULL)) * 100);
 }
 

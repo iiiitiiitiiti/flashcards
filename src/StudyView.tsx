@@ -44,11 +44,6 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
 ];
 
 export function StudyView({ deck, initialProgress, mode, sessionSize, order, onClose }: StudyViewProps) {
-  const availableCount = useMemo(() => {
-    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay());
-    return queue.due.length + queue.fresh.length;
-  }, [deck, initialProgress]);
-
   const initialQueue = useMemo<QueueItem[]>(() => {
     const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay());
     const items = [
@@ -72,6 +67,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   const [result, setResult] = useState<"interrupted" | "completed" | null>(null);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
   const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
+  // 評価の多重実行を止める。state の saving は再レンダーまで false のままなので排他にならない
+  const ratingLockRef = useRef(false);
   // 設定はセッション開始時の値で固定する（学習中に変わらない）
   const thresholds = useRef(loadRatingThresholds()).current;
   const buzzerSpeed = useRef(loadBuzzerSpeed()).current;
@@ -95,6 +92,17 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     setShownChars(0);
     setBuzzedAt(null);
   }, [current, reviewedCount]);
+
+  useEffect(() => {
+    // アプリを離れていた時間を秒数評価に含めない。早押しはまだ押していなければ読み直す
+    function handleVisibility() {
+      if (document.visibilityState !== "visible") return;
+      setShownAt(Date.now());
+      if (!revealed && buzzedAt === null) setShownChars(0);
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [revealed, buzzedAt]);
 
   useEffect(() => {
     // リザルトを表示している間は読み上げを止める（裏で問題が進んでしまわないように）
@@ -179,14 +187,17 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   );
 
   async function handleRate(rating: ReviewRating) {
-    if (!current || saving) return;
+    if (!current || ratingLockRef.current) return;
+    ratingLockRef.current = true;
+    // 対象カードをローカルに固定する（保存中に current が差し替わっても取り違えない）
+    const target = current;
     setSaving(true);
     setError(null);
     const now = new Date();
-    const existing = progressRef.current.get(current.card.id);
+    const existing = progressRef.current.get(target.card.id);
     const record: ProgressRecord = {
       deckId: deck.id,
-      cardId: current.card.id,
+      cardId: target.card.id,
       progress: rate(existing?.progress ?? null, rating, now),
       introducedDayKey: existing?.introducedDayKey ?? dayKey(now),
       updatedAt: now.getTime(),
@@ -196,21 +207,22 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
       await saveReview(record, {
         reviewId: crypto.randomUUID(),
         deckId: deck.id,
-        cardId: current.card.id,
+        cardId: target.card.id,
         rating,
         reviewedAt: now.getTime(),
       });
     } catch {
       setError("進捗を保存できませんでした。もう一度お試しください。");
       setSaving(false);
+      ratingLockRef.current = false;
       return;
     }
-    progressRef.current.set(current.card.id, record);
+    progressRef.current.set(target.card.id, record);
     setSessionLog((log) => [
       {
-        cardId: current.card.id,
-        front: current.card.front,
-        back: current.card.back,
+        cardId: target.card.id,
+        front: target.card.front,
+        back: target.card.back,
         rating,
         fromPhase: existing?.progress.reps ?? 0,
         toPhase: record.progress.reps,
@@ -222,10 +234,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     setQueue((items) => {
       const rest = items.slice(1);
       // 「もう一度」はセッション末尾に再出題する
-      return rating === 1 ? [...rest, { card: current.card, isNew: false }] : rest;
+      return rating === 1 ? [...rest, { card: target.card, isNew: false }] : rest;
     });
     setRevealed(false);
     setSaving(false);
+    ratingLockRef.current = false;
   }
 
   useEffect(() => {
@@ -237,7 +250,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     <header className="study-header">
       <div className="study-header-row">
         <h1>{deck.name}{mode === "buzzer" ? "（早押し）" : ""}</h1>
-        {result === null && <button type="button" onClick={() => setResult("interrupted")}>中断</button>}
+        {result === null && (
+          <button type="button" disabled={saving} onClick={() => setResult("interrupted")}>中断</button>
+        )}
       </div>
       <div
         className="progress-track"
@@ -271,8 +286,14 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
 
   if (result !== null) {
     // デッキ全体の達成率。セッション中の評価も progressRef に入っているので最新の値になる
-    const phases = deck.cards.map((card) => progressRef.current.get(card.id)?.progress.reps ?? 0);
+    const phases = deck.cards.map((card) => {
+      const progress = progressRef.current.get(card.id)?.progress;
+      return { reps: progress?.reps ?? 0, state: progress?.state ?? 0 };
+    });
     const phaseGain = sessionLog.reduce((total, entry) => total + (entry.toPhase - entry.fromPhase), 0);
+    // 評価回数ではなく、いま出せるカードが残っているかで判定する
+    const rest = buildStudyQueue(deck, [...progressRef.current.values()], new Date(), loadNewCardsPerDay());
+    const remaining = rest.due.length + rest.fresh.length;
     return (
       <section className="study study-result">
         {header}
@@ -282,7 +303,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
           phaseGain={phaseGain}
           entries={sessionLog}
           reason={result}
-          canContinue={result === "interrupted" ? true : availableCount > reviewedCount}
+          canContinue={result === "interrupted" ? true : remaining > 0}
           onContinue={() => (result === "interrupted" ? resumeStudy() : onClose(true))}
           onFinish={() => onClose(false)}
         />

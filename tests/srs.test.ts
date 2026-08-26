@@ -207,20 +207,29 @@ describe("shuffled", () => {
 });
 
 describe("achievementPercent", () => {
-  it("全カードがフェーズ10なら100%、未学習だけなら0%", () => {
-    expect(achievementPercent([10, 10, 10], 3)).toBe(100);
-    expect(achievementPercent([0, 0, 0], 3)).toBe(0);
+  const review = (reps: number) => ({ reps, state: 2 });
+  const learning = (reps: number) => ({ reps, state: 1 });
+
+  it("フェーズ10かつ定着なら満点、未学習だけなら0%", () => {
+    expect(achievementPercent([review(10), review(10), review(10)], 3)).toBe(100);
+    expect(achievementPercent([{ reps: 0, state: 0 }], 1)).toBe(0);
   });
 
-  it("フェーズ合計 ÷ (枚数 × 10) で計算する", () => {
-    expect(achievementPercent([5, 5], 2)).toBe(50);
-    expect(achievementPercent([1], 2)).toBe(5);
-    expect(achievementPercent([10, 0, 0, 0], 4)).toBe(25);
+  it("定着したカードのフェーズ合計 ÷ (枚数 × 10) で計算する", () => {
+    expect(achievementPercent([review(5), review(5)], 2)).toBe(50);
+    expect(achievementPercent([review(1)], 2)).toBe(5);
+    expect(achievementPercent([review(10), learning(0)], 4)).toBe(25);
+  });
+
+  it("定着していないカードは、フェーズが進んでいても数えない", () => {
+    // 「もう一度」を10回続けた状態（reps=10 だが state は Learning のまま）
+    expect(achievementPercent([learning(10), learning(10)], 2)).toBe(0);
+    expect(achievementPercent([review(10), learning(10)], 2)).toBe(50);
   });
 
   it("フェーズ10を超えても満点扱いにし、100%を超えない", () => {
-    expect(achievementPercent([30, 30], 2)).toBe(100);
-    expect(achievementPercent([20, 0], 2)).toBe(50);
+    expect(achievementPercent([review(30), review(30)], 2)).toBe(100);
+    expect(achievementPercent([review(20), learning(0)], 2)).toBe(50);
   });
 
   it("カードが0枚なら0%（0除算しない）", () => {
@@ -228,6 +237,6 @@ describe("achievementPercent", () => {
   });
 
   it("負のフェーズは0として扱う", () => {
-    expect(achievementPercent([-5, 10], 2)).toBe(50);
+    expect(achievementPercent([review(-5), review(10)], 2)).toBe(50);
   });
 });
