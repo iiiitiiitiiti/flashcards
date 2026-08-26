@@ -27,11 +27,30 @@ beforeEach(() => {
   resetDbForTest();
 });
 
+describe("exportBackup", () => {
+  it("件数と Blob を返し、中身は validateBackup を通る JSON になる", async () => {
+    await saveReview(makeRecord("001", 100), makeLog("r1"));
+    await saveReview(makeRecord("002", 200), makeLog("r2"));
+    const exported = await exportBackup(1234);
+    expect(exported.progressCount).toBe(2);
+    expect(exported.logCount).toBe(2);
+    const parsed = JSON.parse(await exported.blob.text());
+    expect(parsed.exportedAt).toBe(1234);
+    expect(() => validateBackup(parsed)).not.toThrow();
+  });
+
+  it("空の DB でも壊れた JSON にならない", async () => {
+    const exported = await exportBackup(0);
+    const parsed = JSON.parse(await exported.blob.text());
+    expect(parsed).toEqual({ schemaVersion: 1, exportedAt: 0, cardProgress: [], reviewLog: [] });
+  });
+});
+
 describe("exportBackup / importBackup", () => {
   it("エクスポート→空DBへインポートで進捗とログが復元される（roundtrip）", async () => {
     await saveReview(makeRecord("001", 100), makeLog("r1"));
     await saveReview(makeRecord("002", 200), makeLog("r2"));
-    const backup = JSON.parse(JSON.stringify(await exportBackup()));
+    const backup = JSON.parse(await (await exportBackup()).blob.text());
 
     globalThis.indexedDB = new IDBFactory();
     resetDbForTest();

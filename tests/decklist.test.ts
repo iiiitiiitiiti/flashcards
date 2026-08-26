@@ -7,7 +7,7 @@ function deck(name: string, overrides: Partial<DeckListItem> = {}): DeckListItem
     name,
     cardCount: 10,
     todo: 0,
-    learnedPercent: 0,
+    retentionPercent: 0,
     lastStudiedAt: null,
     ...overrides,
   };
@@ -32,9 +32,9 @@ describe("sortDecks", () => {
 
   it("名前順・枚数順・定着率順", () => {
     const items = [
-      deck("B", { todo: 3, learnedPercent: 10 }),
-      deck("A", { todo: 30, learnedPercent: 5 }),
-      deck("C", { todo: 3, learnedPercent: 80 }),
+      deck("B", { todo: 3, retentionPercent: 10 }),
+      deck("A", { todo: 30, retentionPercent: 5 }),
+      deck("C", { todo: 3, retentionPercent: 80 }),
     ];
     expect(sortDecks(items, "name").map((d) => d.name)).toEqual(["A", "B", "C"]);
     expect(sortDecks(items, "todo").map((d) => d.name)).toEqual(["A", "B", "C"]);

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { readProgress, upsertDeckCacheEntry } from "./db";
+import { pruneReviewLog, readProgress, upsertDeckCacheEntry } from "./db";
+import { requestPersistentStorage } from "./quota";
 import { DeckDetailView } from "./DeckDetailView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
-import { buildStudyQueue } from "./srs";
+import { buildStudyQueue, formatPercent, retentionPercent } from "./srs";
 import {
   loadDeckSort,
   loadMotionPreference,
@@ -26,13 +27,11 @@ import type { DeckCacheEntry, DeckSnapshot, ProgressRecord, StudyMode, StudyOrde
 interface DeckStats {
   due: number;
   fresh: number;
-  /** FSRS の Review 状態（定着）に達したカードの割合 */
-  learnedPercent: number;
+  /** 定着率（リザルトのゲージと同じ計算） */
+  retentionPercent: number;
   /** この端末で最後に学習した時刻。未学習なら null */
   lastStudiedAt: number | null;
 }
-
-const FSRS_STATE_REVIEW = 2;
 
 function Donut({ percent }: { percent: number }) {
   return (
@@ -40,9 +39,9 @@ function Donut({ percent }: { percent: number }) {
       className="donut"
       style={{ background: `conic-gradient(var(--color-primary) ${percent * 3.6}deg, var(--color-border) 0deg)` }}
       role="img"
-      aria-label={`定着率 ${percent}%`}
+      aria-label={`定着率 ${formatPercent(percent)}%`}
     >
-      <span>{percent}%</span>
+      <span>{formatPercent(percent)}%</span>
     </div>
   );
 }
@@ -81,11 +80,12 @@ export function App() {
       const records = await readProgress(entry.deckId);
       const queue = buildStudyQueue(entry.deck, records, now, loadNewCardsPerDay());
       const cardIds = new Set(entry.deck.cards.map((card) => card.id));
-      const learned = records.filter((record) => cardIds.has(record.cardId) && record.progress.state === FSRS_STATE_REVIEW).length;
+      // ホームのドーナツとリザルトのゲージで同じ数字を出す（進捗の無いカードは 0 として効くので records だけ渡せばよい）
+      const touched = records.filter((record) => cardIds.has(record.cardId)).map((record) => record.progress);
       next.set(entry.deckId, {
         due: queue.due.length,
         fresh: queue.fresh.length,
-        learnedPercent: entry.deck.cards.length === 0 ? 0 : Math.round((learned / entry.deck.cards.length) * 100),
+        retentionPercent: retentionPercent(touched, entry.deck.cards.length),
         // 進捗の更新時刻の最大値を「最後に学習した時刻」として扱う
         lastStudiedAt: records.length === 0 ? null : Math.max(...records.map((record) => record.updatedAt)),
       });
@@ -112,7 +112,9 @@ export function App() {
 
   useEffect(() => {
     // iOS のストレージ削除対策として永続化を一度だけ要求する（拒否されても続行）
-    void navigator.storage?.persist?.().catch(() => undefined);
+    void requestPersistentStorage();
+    // 古い評価ログを間引く（失敗しても学習には影響しないので握りつぶす）
+    void pruneReviewLog().catch(() => undefined);
     // アニメーション設定を反映（OS の視差効果設定は参照しない）
     document.documentElement.dataset.motion = loadMotionPreference();
   }, []);
@@ -143,7 +145,7 @@ export function App() {
         description: entry.deck.description,
         cardCount: entry.deck.cards.length,
         todo: (deckStats?.due ?? 0) + (deckStats?.fresh ?? 0),
-        learnedPercent: deckStats?.learnedPercent ?? 0,
+        retentionPercent: deckStats?.retentionPercent ?? 0,
         lastStudiedAt: deckStats?.lastStudiedAt ?? null,
       };
     });
@@ -303,7 +305,7 @@ export function App() {
                     </span>
                   </button>
                   <div className="deck-card-side">
-                    {deckStats && <Donut percent={deckStats.learnedPercent} />}
+                    {deckStats && <Donut percent={deckStats.retentionPercent} />}
                     <button type="button" className="primary" disabled={studyCount === 0} onClick={() => setStartingDeckId(entry.deckId)}>
                       {studyCount === 0 ? "完了" : "学習する"}
                     </button>

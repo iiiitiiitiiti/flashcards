@@ -15,14 +15,39 @@ export interface ImportResult {
   logsImported: number;
 }
 
-export async function exportBackup(): Promise<BackupDocument> {
+export interface BackupExport {
+  blob: Blob;
+  exportedAt: number;
+  progressCount: number;
+  logCount: number;
+}
+
+/**
+ * バックアップ JSON を組み立てる。全件を配列に読み出してから stringify すると、
+ * 進捗3万件規模で「オブジェクト配列」と「その JSON 文字列」を同時に抱えることになる。
+ * カーソルで1件ずつ書き出し、Blob の断片として渡してピークを下げる。
+ */
+export async function exportBackup(exportedAt = Date.now()): Promise<BackupExport> {
+  const parts: string[] = [`{\n  "schemaVersion": 1,\n  "exportedAt": ${exportedAt},\n  "cardProgress": [`];
+  const progressCount = await appendAll("cardProgress", parts);
+  parts.push('],\n  "reviewLog": [');
+  const logCount = await appendAll("reviewLog", parts);
+  parts.push("]\n}\n");
+  return { blob: new Blob(parts, { type: "application/json" }), exportedAt, progressCount, logCount };
+}
+
+async function appendAll(storeName: "cardProgress" | "reviewLog", parts: string[]): Promise<number> {
   const db = await getDb();
-  return {
-    schemaVersion: 1,
-    exportedAt: Date.now(),
-    cardProgress: await db.getAll("cardProgress"),
-    reviewLog: await db.getAll("reviewLog"),
-  };
+  let count = 0;
+  let cursor = await db.transaction(storeName).store.openCursor();
+  while (cursor) {
+    parts.push(count === 0 ? "\n    " : ",\n    ");
+    parts.push(JSON.stringify(cursor.value));
+    count += 1;
+    cursor = await cursor.continue();
+  }
+  if (count > 0) parts.push("\n  ");
+  return count;
 }
 
 /** バックアップ全体を検証する。1件でも不正があれば例外（何も書き込まない） */

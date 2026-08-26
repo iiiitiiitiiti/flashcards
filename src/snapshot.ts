@@ -1,6 +1,7 @@
 import { validateDeck } from "./deck";
 import { publishDeckCache, readDeckCache } from "./db";
 import { fetchDeckRaw, listDecks } from "./github";
+import { describeStorageError } from "./quota";
 import type { DeckCacheEntry, DeckSnapshot } from "./types";
 
 function toSnapshot(entries: DeckCacheEntry[], warnings: string[], offline: boolean): DeckSnapshot {
@@ -83,7 +84,14 @@ export async function refreshSnapshot(token: string | null): Promise<DeckSnapsho
     }
   }
 
-  await publishDeckCache(entries, retainDeckIds);
+  try {
+    await publishDeckCache(entries, retainDeckIds);
+  } catch (error) {
+    // 容量不足などで保存できなくても、取得済みのデッキは今回のセッションで使える。
+    // キャッシュは前回のまま残るので、次回起動時にもう一度取り直すことになる
+    const retained = cached.filter((entry) => retainDeckIds.includes(entry.deckId));
+    return toSnapshot([...entries, ...retained], [...warnings, describeStorageError(error, "デッキを保存")], false);
+  }
   const published = await readDeckCache();
   return toSnapshot(published, warnings, false);
 }
