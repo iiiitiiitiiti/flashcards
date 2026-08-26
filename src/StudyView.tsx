@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
-import { buildStudyQueue, dayKey, previewIntervals, rate, ratingFromElapsed } from "./srs";
+import { buildStudyQueue, dayKey, previewIntervals, rate, ratingFromElapsed, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
-import type { ProgressRecord, ReviewRating, StudyMode } from "./types";
+import type { ProgressRecord, ReviewRating, StudyMode, StudyOrder } from "./types";
 
 interface StudyViewProps {
   deck: Deck;
@@ -13,6 +13,8 @@ interface StudyViewProps {
   mode: StudyMode;
   /** このセッションで出題する上限枚数 */
   sessionSize: number;
+  /** 出題順 */
+  order: StudyOrder;
   onClose: () => void;
 }
 
@@ -39,15 +41,17 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }: StudyViewProps) {
+export function StudyView({ deck, initialProgress, mode, sessionSize, order, onClose }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
     const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay());
-    return [
+    const items = [
       ...queue.due.map((card) => ({ card, isNew: false })),
       ...queue.fresh.map((card) => ({ card, isNew: true })),
-      // 選んだ枚数でセッションを打ち切る（「もう一度」の再出題はこの上限に含めない）
-    ].slice(0, sessionSize);
-  }, [deck, initialProgress, sessionSize]);
+    ];
+    // ランダムはデッキ全体から無作為に選びたいので、枚数で切る前にシャッフルする
+    // 選んだ枚数でセッションを打ち切る（「もう一度」の再出題はこの上限に含めない）
+    return (order === "random" ? shuffled(items) : items).slice(0, sessionSize);
+  }, [deck, initialProgress, sessionSize, order]);
 
   const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
   const [revealed, setRevealed] = useState(false);

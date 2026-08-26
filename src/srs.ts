@@ -138,6 +138,16 @@ export function validateProgressDTO(value: unknown): ProgressDTO {
   return dto as unknown as ProgressDTO;
 }
 
+/** Fisher-Yates で並びを崩した新しい配列を返す（元の配列は変更しない） */
+export function shuffled<T>(items: T[]): T[] {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swap]] = [result[swap], result[index]];
+  }
+  return result;
+}
+
 export interface StudyQueue {
   /** 期限切れカード（due 昇順） */
   due: DeckCard[];

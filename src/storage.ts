@@ -1,5 +1,6 @@
 import { DEFAULT_RATING_THRESHOLDS, NEW_CARDS_PER_DAY, NEW_CARDS_PER_DAY_OPTIONS, normalizeRatingThresholds } from "./srs";
-import type { RatingThresholds, StudyMode } from "./types";
+import { DECK_SORTS, type DeckSort } from "./decklist";
+import type { RatingThresholds, StudyMode, StudyOrder } from "./types";
 
 const TOKEN_KEY = "flashcards:github-pat";
 
@@ -198,5 +199,44 @@ export function saveNewCardsPerDay(value: number): void {
     localStorage.setItem(NEW_CARDS_PER_DAY_KEY, String(value));
   } catch {
     // 保存できなくても既定枚数で動く
+  }
+}
+
+const DECK_SORT_KEY = "flashcards:deck-sort";
+
+/** ホームのデッキ並び替え。既定は最近学習した順 */
+export function loadDeckSort(): DeckSort {
+  try {
+    const stored = localStorage.getItem(DECK_SORT_KEY);
+    return DECK_SORTS.some((option) => option.value === stored) ? (stored as DeckSort) : "recent";
+  } catch {
+    return "recent";
+  }
+}
+
+export function saveDeckSort(value: DeckSort): void {
+  try {
+    localStorage.setItem(DECK_SORT_KEY, value);
+  } catch {
+    // 保存できなくても既定（最近学習した順）で動く
+  }
+}
+
+const STUDY_ORDER_KEY = "flashcards:study-order";
+
+/** 出題順。既定は順番どおり（復習→新規のデッキ順） */
+export function loadStudyOrder(): StudyOrder {
+  try {
+    return localStorage.getItem(STUDY_ORDER_KEY) === "random" ? "random" : "sequential";
+  } catch {
+    return "sequential";
+  }
+}
+
+export function saveStudyOrder(value: StudyOrder): void {
+  try {
+    localStorage.setItem(STUDY_ORDER_KEY, value);
+  } catch {
+    // 保存できなくても既定（順番どおり）で動く
   }
 }
