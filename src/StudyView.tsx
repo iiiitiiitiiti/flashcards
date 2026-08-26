@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
-import { buildStudyQueue, dayKey, previewIntervals, rate, ratingFromElapsed, shuffled } from "./srs";
+import { buildStudyQueue, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
+import { StudyResult, type SessionEntry } from "./StudyResult";
 import type { ProgressRecord, ReviewRating, StudyMode, StudyOrder } from "./types";
 
 interface StudyViewProps {
@@ -15,7 +16,8 @@ interface StudyViewProps {
   sessionSize: number;
   /** 出題順 */
   order: StudyOrder;
-  onClose: () => void;
+  /** 学習を終える。restart が true なら同じ設定でもう一度始める */
+  onClose: (restart: boolean) => void;
 }
 
 interface QueueItem {
@@ -42,6 +44,11 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
 ];
 
 export function StudyView({ deck, initialProgress, mode, sessionSize, order, onClose }: StudyViewProps) {
+  const availableCount = useMemo(() => {
+    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay());
+    return queue.due.length + queue.fresh.length;
+  }, [deck, initialProgress]);
+
   const initialQueue = useMemo<QueueItem[]>(() => {
     const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay());
     const items = [
@@ -60,6 +67,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reviewedCount, setReviewedCount] = useState(0);
+  /** リザルトに出す、このセッションで評価したカードの記録 */
+  const [sessionLog, setSessionLog] = useState<SessionEntry[]>([]);
+  const [result, setResult] = useState<"interrupted" | "completed" | null>(null);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
   const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
   // 設定はセッション開始時の値で固定する（学習中に変わらない）
@@ -147,6 +157,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     else reveal();
   }
 
+  // 右上に出す現在のフェーズ（FSRS の reps）
+  const currentPhase = current ? (progressRef.current.get(current.card.id)?.progress.reps ?? 0) : 0;
+
   const progressPercent = reviewedCount + queue.length === 0 ? 100 : Math.round((reviewedCount / (reviewedCount + queue.length)) * 100);
 
   const intervals = useMemo(
@@ -182,6 +195,18 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
       return;
     }
     progressRef.current.set(current.card.id, record);
+    setSessionLog((log) => [
+      {
+        cardId: current.card.id,
+        front: current.card.front,
+        back: current.card.back,
+        rating,
+        fromPhase: existing?.progress.reps ?? 0,
+        toPhase: record.progress.reps,
+        interval: formatInterval(record.progress.due - now.getTime()),
+      },
+      ...log,
+    ]);
     setReviewedCount((count) => count + 1);
     setQueue((items) => {
       const rest = items.slice(1);
@@ -192,11 +217,16 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     setSaving(false);
   }
 
+  useEffect(() => {
+    // キューを最後までやり切ったらリザルトを出す
+    if (!current && result === null) setResult("completed");
+  }, [current, result]);
+
   const header = (
     <header className="study-header">
       <div className="study-header-row">
         <h1>{deck.name}{mode === "buzzer" ? "（早押し）" : ""}</h1>
-        <button type="button" onClick={onClose}>{current ? "中断" : "閉じる"}</button>
+        {result === null && <button type="button" onClick={() => setResult("interrupted")}>中断</button>}
       </div>
       <div
         className="progress-track"
@@ -211,32 +241,40 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     </header>
   );
 
-  if (!current) {
+  if (initialQueue.length === 0) {
     return (
       <section className="study">
         {header}
         <div className="study-scroll">
           <div className="study-card study-summary-card">
-            {initialQueue.length === 0 ? (
-              <>
-                <p className="summary-emoji" aria-hidden="true">🎉</p>
-                <p className="summary-title">今日学習するカードはありません</p>
-              </>
-            ) : (
-              <>
-                <p className="summary-emoji" aria-hidden="true">🎉</p>
-                <p className="summary-title">おつかれさまでした</p>
-                <p className="muted">{reviewedCount} 回学習しました</p>
-              </>
-            )}
+            <p className="summary-emoji" aria-hidden="true">🎉</p>
+            <p className="summary-title">今日学習するカードはありません</p>
           </div>
         </div>
         <footer className="study-actions">
-          <button type="button" className="primary reveal-button" onClick={onClose}>ホームへ戻る</button>
+          <button type="button" className="primary reveal-button" onClick={() => onClose(false)}>ホームへ戻る</button>
         </footer>
       </section>
     );
   }
+
+  if (result !== null) {
+    return (
+      <section className="study study-result">
+        {header}
+        <StudyResult
+          mode={mode}
+          entries={sessionLog}
+          reason={result}
+          canContinue={result === "interrupted" ? true : availableCount > reviewedCount}
+          onContinue={() => (result === "interrupted" ? setResult(null) : onClose(true))}
+          onFinish={() => onClose(false)}
+        />
+      </section>
+    );
+  }
+
+  if (!current) return null;
 
   if (mode === "buzzer") {
     return (
@@ -272,6 +310,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
               style={{ transform: dragX === 0 ? undefined : `translateX(${dragX}px) rotate(${dragX * 0.04}deg)` }}
             >
               <div className="study-card buzzer-card">
+                <span className="study-card-chip">
+                  <span className="phase-chip">フェーズ {currentPhase}</span>
+                </span>
                 {revealed ? (
                   <>
                     <div className="study-front">{current.card.front}</div>
@@ -359,7 +400,10 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
           >
             <div className={`flip-inner${revealed ? " flipped" : ""}`}>
               <div className="study-card flip-face flip-front" aria-hidden={revealed}>
-                {current.isNew && <span className="chip chip-new study-card-chip">新規</span>}
+                <span className="study-card-chip">
+                  {current.isNew && <span className="chip chip-new">新規</span>}
+                  <span className="phase-chip">フェーズ {currentPhase}</span>
+                </span>
                 <div className="study-front">{current.card.front}</div>
               </div>
               <div className="study-card flip-face flip-back" aria-hidden={!revealed}>
