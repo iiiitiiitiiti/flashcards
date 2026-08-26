@@ -20,6 +20,8 @@ function deckJson(id: string, front = "問"): string {
 interface FetchPlan {
   commitSha?: string;
   deckPaths?: string[];
+  /** true にすると decks の sha を欠落させる（壊れた一覧の再現） */
+  dropShas?: boolean;
   /** デッキ id → blob SHA。省略時はデッキ id から決まる固定値 */
   blobShas?: Record<string, string>;
   rawBodies?: Record<string, string | Error>;
@@ -53,7 +55,7 @@ function installFetch(plan: FetchPlan): void {
             tree: (plan.deckPaths ?? []).map((path) => ({
               path,
               type: "blob",
-              sha: plan.blobShas?.[deckIdOf(path)] ?? `blob-${deckIdOf(path)}`,
+              ...(plan.dropShas ? {} : { sha: plan.blobShas?.[deckIdOf(path)] ?? `blob-${deckIdOf(path)}` }),
             })),
           }),
           { status: 200 },
@@ -219,6 +221,17 @@ describe("refreshSnapshot のキャッシュ利用（blob SHA 判定）", () => 
     installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
     await refreshSnapshot(null);
     expect(rawFetchCount()).toBe(0);
+  });
+
+  it("一覧の sha が欠けていたら、キャッシュを消さずオフライン扱いにする", async () => {
+    installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
+    await refreshSnapshot(null);
+
+    installFetch({ deckPaths: ["decks/a.json"], dropShas: true, rawBodies: { a: deckJson("a") } });
+    const snapshot = await refreshSnapshot(null);
+    expect(snapshot.offline).toBe(true);
+    expect(snapshot.decks.map((entry) => entry.deckId)).toEqual(["a"]);
+    expect(await readDeckCache()).toHaveLength(1);
   });
 
   it("デッキが増えたら新しいものだけ取得し、消えたらキャッシュから外す", async () => {
