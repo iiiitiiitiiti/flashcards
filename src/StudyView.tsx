@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
 import { describeStorageError } from "./quota";
-import { buildStudyQueue, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
+import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
 import { splitGraphemes } from "./text";
@@ -20,6 +20,8 @@ interface StudyViewProps {
   order: StudyOrder;
   /** このタグを持つカードだけを出す。null なら絞り込まない */
   tag: string | null;
+  /** 全デッキ合計で数えるときの、開始時点で使った新規枠。デッキごとの設定なら undefined */
+  usedNewCardsToday?: number;
   /** 学習を終える。restart が true なら同じ設定でもう一度始める */
   onClose: (restart: boolean) => void;
 }
@@ -47,9 +49,9 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, onClose }: StudyViewProps) {
+export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, usedNewCardsToday, onClose }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
-    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay(), tag);
+    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay(), tag, usedNewCardsToday);
     const items = [
       ...queue.due.map((card) => ({ card, isNew: false })),
       ...queue.fresh.map((card) => ({ card, isNew: true })),
@@ -57,7 +59,10 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     // ランダムはデッキ全体から無作為に選びたいので、枚数で切る前にシャッフルする
     // 選んだ枚数でセッションを打ち切る（「もう一度」の再出題はこの上限に含めない）
     return (order === "random" ? shuffled(items) : items).slice(0, sessionSize);
-  }, [deck, initialProgress, sessionSize, order, tag]);
+  }, [deck, initialProgress, sessionSize, order, tag, usedNewCardsToday]);
+
+  /** 開始時点でこのデッキが使っていた新規枠。セッション中の増分を差し引くのに使う */
+  const introducedAtStart = useMemo(() => countIntroducedToday(initialProgress, new Date()), [initialProgress]);
 
   const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
   const [revealed, setRevealed] = useState(false);
@@ -354,7 +359,14 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     });
     const phaseGain = sessionLog.reduce((total, entry) => total + (entry.toPhase - entry.fromPhase), 0);
     // 評価回数ではなく、いま出せるカードが残っているかで判定する
-    const rest = buildStudyQueue(deck, [...progressRef.current.values()], new Date(), loadNewCardsPerDay(), tag);
+    const now = new Date();
+    const current = [...progressRef.current.values()];
+    // 外から来た値は「開始時点」のもの。このセッションで導入したぶんを足さないと枠を多く見積もる
+    const used =
+      usedNewCardsToday === undefined
+        ? undefined
+        : usedNewCardsToday + countIntroducedToday(current, now) - introducedAtStart;
+    const rest = buildStudyQueue(deck, current, now, loadNewCardsPerDay(), tag, used);
     const remaining = rest.due.length + rest.fresh.length;
     return (
       <section className="study study-result">

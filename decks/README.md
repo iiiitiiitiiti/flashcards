@@ -54,6 +54,17 @@ Claude・人間ともに、デッキを追加・編集するときは必ずこ�
 
 ```bash
 pip3 install openpyxl          # 初回のみ
+npm run decks:sync             # 生成 → 検証 → 差分表示 → commit・push
+npm run decks:sync -- --dry-run    # commit せず差分だけ見る
+```
+
+`decks:sync` は**カード id が消えていたら一覧を出して止まる**（`scripts/sync-decks.mjs`）。
+消えた id の学習進捗は孤児になり復旧できないため、Excel の行削除・Q列「No」の書き換えを事故として扱う。
+意図した削除なら `--allow-removals` を付ける。生成をやり直したいときは `git checkout -- decks` で戻せる。
+
+生成だけしたい場合は従来どおり手で叩いてもよい（差分の確認は自分で行うこと）。
+
+```bash
 python3 scripts/import-quiz-xlsx.py
 npm run validate:decks
 ```
@@ -62,4 +73,5 @@ npm run validate:decks
 - カード id は Q列「No」（静的な通し番号）の5桁ゼロ埋め。A列「No.」は `=ROW()-1` の数式で並べ替えるとずれるため使わない
 - Q列が数値でない行（60件）は問題文の SHA-1 先頭10桁に `h` を付けた id にする。**該当行の問題文を書き換えると id が変わり、その問題の学習進捗は失われる**
 - 問題の大ジャンルを xlsx 側で変更すると、そのカードは別デッキへ移動する。進捗は (デッキ id, カード id) で持つため、**ジャンルを変えると学習進捗は引き継がれない**
+- **大ジャンルの問題がすべて無くなっても、そのデッキの JSON は残る**（importer は書き込むだけで削除しない）。デッキごと廃止するときは手でファイルを消す
 - 1MB を超えるデッキ（quiz-koumin / quiz-rikei / quiz-seikatsu）は、GitHub Contents API の制限でアプリ内の「カード追加」「CSV取込」が使えない。xlsx 側で管理すること
