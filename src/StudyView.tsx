@@ -97,11 +97,12 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   }, [current, reviewedCount]);
 
   useEffect(() => {
-    if (mode !== "buzzer" || !current || revealed || buzzedAt !== null) return;
+    // リザルトを表示している間は読み上げを止める（裏で問題が進んでしまわないように）
+    if (mode !== "buzzer" || !current || revealed || buzzedAt !== null || result !== null) return;
     if (shownChars >= buzzerChars.length) return;
     const timer = window.setTimeout(() => setShownChars((count) => count + 1), buzzerSpeed);
     return () => window.clearTimeout(timer);
-  }, [mode, current, revealed, buzzedAt, shownChars, buzzerChars.length, buzzerSpeed]);
+  }, [mode, current, revealed, buzzedAt, result, shownChars, buzzerChars.length, buzzerSpeed]);
 
   // 左右スワイプ評価（答え表示中のみ）。左=もう一度、右=経過秒数で自動振り分け
   const SWIPE_THRESHOLD = 80;
@@ -148,6 +149,16 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
 
   function reveal() {
     setRevealed(true);
+  }
+
+  /**
+   * 中断から学習へ戻る。中断していた時間を持ち込まないよう、その問題を仕切り直す。
+   * まだ押していない早押しは読み上げを最初からやり直し、押した後なら押した位置を保つ。
+   */
+  function resumeStudy() {
+    setResult(null);
+    setShownAt(Date.now());
+    if (!revealed && buzzedAt === null) setShownChars(0);
   }
 
   /** 早押しのタップ: 1回目で読み上げを止め、2回目で答えを表示する */
@@ -272,7 +283,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
           entries={sessionLog}
           reason={result}
           canContinue={result === "interrupted" ? true : availableCount > reviewedCount}
-          onContinue={() => (result === "interrupted" ? setResult(null) : onClose(true))}
+          onContinue={() => (result === "interrupted" ? resumeStudy() : onClose(true))}
           onFinish={() => onClose(false)}
         />
       </section>
