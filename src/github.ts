@@ -86,14 +86,14 @@ export async function listDecks(token: string | null): Promise<DeckListing> {
   if (tree.data.truncated) {
     throw new Error("リポジトリのツリーが大きすぎるため、デッキ一覧を取得できませんでした");
   }
-  const decks = tree.data.tree
-    .filter(
-      (entry) =>
-        entry.type === "blob" &&
-        typeof entry.path === "string" &&
-        typeof entry.sha === "string" &&
-        /^decks\/[^/]+\.json$/.test(entry.path),
-    )
+  const deckEntries = tree.data.tree.filter(
+    (entry) => entry.type === "blob" && typeof entry.path === "string" && /^decks\/[^/]+\.json$/.test(entry.path),
+  );
+  // sha が欠けたエントリを黙って捨てると、そのデッキが「消えた」と誤判定されてキャッシュからも消える
+  if (deckEntries.some((entry) => typeof entry.sha !== "string" || entry.sha === "")) {
+    throw new Error("デッキ一覧に不完全な項目が含まれていました");
+  }
+  const decks = deckEntries
     .map((entry) => ({
       deckId: (entry.path as string).slice("decks/".length, -".json".length),
       blobSha: entry.sha as string,

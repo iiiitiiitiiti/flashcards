@@ -80,6 +80,15 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     return () => document.body.classList.remove("study-lock");
   }, []);
 
+  useEffect(
+    () => () => {
+      // 飛ばしている途中で画面を離れても、タイマーと後続の更新を残さない
+      mountedRef.current = false;
+      if (flyTimerRef.current !== undefined) window.clearTimeout(flyTimerRef.current);
+    },
+    [],
+  );
+
   const current = queue[0];
 
   // 早押し: 問題文を1文字ずつ送り、押した時点で止める
@@ -119,6 +128,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   const FLY_OUT_MS = 260;
   const [dragX, setDragX] = useState(0);
   const [flying, setFlying] = useState(false);
+  const flyTimerRef = useRef<number | undefined>(undefined);
+  const mountedRef = useRef(true);
   const dragRef = useRef({ pointerId: -1, startX: 0, startY: 0, horizontal: false, suppressClick: false });
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -156,7 +167,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     else if (dx >= SWIPE_THRESHOLD) flyOut(1, mode === "buzzer" ? 3 : swipeRating());
   }
 
-  /** 指を離した位置からカードを画面外へ送り出し、飛び切ってから評価を確定する */
+  /**
+   * 指を離した位置からカードを画面外へ送り出す。
+   * 保存は待たずにすぐ始め、アニメーションの完了と保存の完了が揃ってから次のカードへ進む
+   * （保存を遅らせると、その間に画面を離れたときに評価が失われるため）。
+   */
   function flyOut(direction: 1 | -1, rating: ReviewRating) {
     if (!current || ratingLockRef.current) return;
     ratingLockRef.current = true;
@@ -166,11 +181,10 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     }
     setFlying(true);
     setDragX(direction * (window.innerWidth + 200));
-    window.setTimeout(() => {
-      setFlying(false);
-      setDragX(0);
-      void handleRate(rating);
-    }, FLY_OUT_MS);
+    const animation = new Promise<void>((resolve) => {
+      flyTimerRef.current = window.setTimeout(resolve, FLY_OUT_MS);
+    });
+    void handleRate(rating, animation);
   }
 
   /** 右スワイプの評価。問題が表示されてからの経過時間で 簡単/普通/難しい/もう一度 を決める */
@@ -217,11 +231,17 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   }
 
   /** ロックを保持した状態で呼ぶこと（requestRate / flyOut 経由） */
-  async function handleRate(rating: ReviewRating) {
-    if (!current) {
+  async function handleRate(rating: ReviewRating, animation?: Promise<void>) {
+    try {
+      await rateCard(rating, animation);
+    } finally {
+      // rate() の例外など、想定外の失敗でもロックは必ず解除する
       ratingLockRef.current = false;
-      return;
     }
+  }
+
+  async function rateCard(rating: ReviewRating, animation?: Promise<void>) {
+    if (!current) return;
     // 対象カードをローカルに固定する（保存中に current が差し替わっても取り違えない）
     const target = current;
     setSaving(true);
@@ -246,10 +266,15 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
       });
     } catch {
       setError("進捗を保存できませんでした。もう一度お試しください。");
+      // 飛ばしかけたカードは手元へ戻す
+      setFlying(false);
+      setDragX(0);
       setSaving(false);
-      ratingLockRef.current = false;
       return;
     }
+    // 飛び切る前にキューを進めると、カードが一瞬戻ってから消えてしまう
+    if (animation) await animation;
+    if (!mountedRef.current) return;
     progressRef.current.set(target.card.id, record);
     setSessionLog((log) => [
       {
@@ -270,8 +295,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
       return rating === 1 ? [...rest, { card: target.card, isNew: false }] : rest;
     });
     setRevealed(false);
+    setFlying(false);
+    setDragX(0);
     setSaving(false);
-    ratingLockRef.current = false;
   }
 
   useEffect(() => {
