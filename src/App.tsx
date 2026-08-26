@@ -12,11 +12,13 @@ import {
   loadSessionSize,
   loadStudyOrder,
   loadStudyMode,
+  loadStudyTag,
   loadToken,
   saveDeckSort,
   saveSessionSize,
   saveStudyMode,
   saveStudyOrder,
+  saveStudyTag,
   SESSION_SIZES,
   type SessionSize,
 } from "./storage";
@@ -48,7 +50,7 @@ function Donut({ percent }: { percent: number }) {
 
 type View =
   | { type: "home" }
-  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder; sessionId: number }
+  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder; tag: string | null; sessionId: number }
   | { type: "deck"; deckId: string }
   | { type: "settings" };
 
@@ -72,6 +74,9 @@ export function App() {
   const [deckSearch, setDeckSearch] = useState("");
   const [deckSort, setDeckSort] = useState<DeckSort>(loadDeckSort);
   const [startSize, setStartSize] = useState<SessionSize>(loadSessionSize);
+  // 開始シートで選んでいるタグと、件数を出すための進捗（シートを開いたときに1回読む）
+  const [startTag, setStartTag] = useState<string | null>(null);
+  const [startProgress, setStartProgress] = useState<ProgressRecord[] | null>(null);
 
   const updateStats = useCallback(async (target: DeckSnapshot) => {
     const now = new Date();
@@ -134,6 +139,28 @@ export function App() {
     };
   }, [refresh, updateStats]);
 
+  const startingEntry = useMemo(
+    () => (startingDeckId === null ? null : (snapshot?.decks.find((entry) => entry.deckId === startingDeckId) ?? null)),
+    [snapshot, startingDeckId],
+  );
+
+  /** 開始シートに出すタグ一覧。カード一覧の絞り込みと同じ並び（日本語順） */
+  const startTags = useMemo(() => {
+    if (!startingEntry) return [];
+    const tags = new Set<string>();
+    for (const card of startingEntry.deck.cards) {
+      for (const tag of card.tags ?? []) tags.add(tag);
+    }
+    return [...tags].sort((left, right) => left.localeCompare(right, "ja"));
+  }, [startingEntry]);
+
+  /** 選んでいるタグでいま学習できる枚数。進捗を読み終えるまでは null */
+  const startCounts = useMemo(() => {
+    if (!startingEntry || startProgress === null) return null;
+    const queue = buildStudyQueue(startingEntry.deck, startProgress, new Date(), loadNewCardsPerDay(), startTag);
+    return { due: queue.due.length, fresh: queue.fresh.length };
+  }, [startingEntry, startProgress, startTag]);
+
   const deckItems = useMemo<(DeckListItem & { entry: DeckCacheEntry })[]>(() => {
     if (!snapshot) return [];
     return snapshot.decks.map((entry) => {
@@ -161,21 +188,31 @@ export function App() {
     saveDeckSort(next);
   }
 
-  async function startStudy(deckId: string, mode: StudyMode, sessionSize: SessionSize, order: StudyOrder) {
-    // 次回の既定値として選択を覚えておく
+  async function startStudy(deckId: string, mode: StudyMode, sessionSize: SessionSize, order: StudyOrder, tag: string | null) {
+    // 次回の既定値として選択を覚えておく（タグだけはデッキごとに覚える）
     saveStudyMode(mode);
     saveSessionSize(sessionSize);
     saveStudyOrder(order);
+    saveStudyTag(deckId, tag);
     setStartingDeckId(null);
     const progress = await readProgress(deckId);
     setSessionId((id) => id + 1);
-    setView({ type: "study", deckId, progress, mode, sessionSize, order, sessionId: sessionId + 1 });
+    setView({ type: "study", deckId, progress, mode, sessionSize, order, tag, sessionId: sessionId + 1 });
+  }
+
+  /** 学習開始シートを開く。タグの初期値は前回の選択（デッキに無いタグなら「全タグ」） */
+  function openStartSheet(deckId: string, deckTags: string[]) {
+    const remembered = loadStudyTag(deckId);
+    setStartTag(remembered !== null && deckTags.includes(remembered) ? remembered : null);
+    setStartProgress(null);
+    setStartingDeckId(deckId);
+    void readProgress(deckId).then(setStartProgress);
   }
 
   function closeStudy(restart: boolean) {
     if (restart && view.type === "study") {
       // 同じ設定のまま、最新の進捗でセッションを組み直す
-      void startStudy(view.deckId, view.mode, view.sessionSize, view.order);
+      void startStudy(view.deckId, view.mode, view.sessionSize, view.order, view.tag);
       return;
     }
     setView({ type: "home" });
@@ -237,6 +274,7 @@ export function App() {
             mode={view.mode}
             sessionSize={view.sessionSize}
             order={view.order}
+            tag={view.tag}
             onClose={closeStudy}
           />
         </main>
@@ -306,7 +344,12 @@ export function App() {
                   </button>
                   <div className="deck-card-side">
                     {deckStats && <Donut percent={deckStats.retentionPercent} />}
-                    <button type="button" className="primary" disabled={studyCount === 0} onClick={() => setStartingDeckId(entry.deckId)}>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={studyCount === 0}
+                      onClick={() => openStartSheet(entry.deckId, [...new Set(entry.deck.cards.flatMap((card) => card.tags ?? []))])}
+                    >
                       {studyCount === 0 ? "完了" : "学習する"}
                     </button>
                   </div>
@@ -352,6 +395,24 @@ export function App() {
                 ))}
               </div>
             </div>
+            {startTags.length > 0 && (
+              <div className="sheet-field">
+                <span className="sheet-label">タグ</span>
+                <select value={startTag ?? ""} onChange={(event) => setStartTag(event.target.value === "" ? null : event.target.value)}>
+                  <option value="">全タグ</option>
+                  {startTags.map((tag) => (
+                    <option key={tag} value={tag}>{tag}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {startCounts !== null && (
+              <p className="muted sheet-counts">
+                {startTag === null ? "このデッキで" : `「${startTag}」で`}いま学習できるのは
+                <strong> 復習 {startCounts.due} 枚・新規 {startCounts.fresh} 枚 </strong>
+                です。
+              </p>
+            )}
             <p className="muted">
               {startMode === "buzzer"
                 ? "問題文が1文字ずつ表示されます。押した時点で止まり、答え合わせは自己申告です。"
@@ -361,7 +422,12 @@ export function App() {
                 : "出題順は復習（期限が近い順）→ 新規（デッキの上から順）です。"}
             </p>
             <div className="button-row">
-              <button type="button" className="primary" onClick={() => void startStudy(startingDeckId, startMode, startSize, startOrder)}>
+              <button
+                type="button"
+                className="primary"
+                disabled={startCounts !== null && startCounts.due + startCounts.fresh === 0}
+                onClick={() => void startStudy(startingDeckId, startMode, startSize, startOrder, startTag)}
+              >
                 開始
               </button>
               <button type="button" onClick={() => setStartingDeckId(null)}>キャンセル</button>

@@ -27,6 +27,8 @@ interface StudyResultProps {
   reason: "interrupted" | "completed";
   /** まだ学習できるカードが残っているか */
   canContinue: boolean;
+  /** 絞り込んで学習していたタグ。残り0枚の案内を「デッキ」ではなくタグで書くのに使う */
+  tag: string | null;
   onContinue: () => void;
   onFinish: () => void;
 }
@@ -125,7 +127,7 @@ function Gauge({ percent }: { percent: number }) {
   );
 }
 
-export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, onContinue, onFinish }: StudyResultProps) {
+export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, tag, onContinue, onFinish }: StudyResultProps) {
   const labels = mode === "buzzer" ? BUZZER_RATING_LABELS : RATING_LABELS;
 
   return (
@@ -152,7 +154,9 @@ export function StudyResult({ mode, entries, percent, phaseGain, reason, canCont
           </button>
         </div>
         {reason === "completed" && !canContinue && (
-          <p className="muted">このデッキで今日出せるカードは終わりました。</p>
+          <p className="muted">
+            {tag === null ? "このデッキ" : `「${tag}」`}で今日出せるカードは終わりました。
+          </p>
         )}
       </div>
 

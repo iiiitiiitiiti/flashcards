@@ -18,6 +18,8 @@ interface StudyViewProps {
   sessionSize: number;
   /** 出題順 */
   order: StudyOrder;
+  /** このタグを持つカードだけを出す。null なら絞り込まない */
+  tag: string | null;
   /** 学習を終える。restart が true なら同じ設定でもう一度始める */
   onClose: (restart: boolean) => void;
 }
@@ -45,9 +47,9 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, mode, sessionSize, order, onClose }: StudyViewProps) {
+export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, onClose }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
-    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay());
+    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay(), tag);
     const items = [
       ...queue.due.map((card) => ({ card, isNew: false })),
       ...queue.fresh.map((card) => ({ card, isNew: true })),
@@ -55,7 +57,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     // ランダムはデッキ全体から無作為に選びたいので、枚数で切る前にシャッフルする
     // 選んだ枚数でセッションを打ち切る（「もう一度」の再出題はこの上限に含めない）
     return (order === "random" ? shuffled(items) : items).slice(0, sessionSize);
-  }, [deck, initialProgress, sessionSize, order]);
+  }, [deck, initialProgress, sessionSize, order, tag]);
 
   const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
   const [revealed, setRevealed] = useState(false);
@@ -352,7 +354,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
     });
     const phaseGain = sessionLog.reduce((total, entry) => total + (entry.toPhase - entry.fromPhase), 0);
     // 評価回数ではなく、いま出せるカードが残っているかで判定する
-    const rest = buildStudyQueue(deck, [...progressRef.current.values()], new Date(), loadNewCardsPerDay());
+    const rest = buildStudyQueue(deck, [...progressRef.current.values()], new Date(), loadNewCardsPerDay(), tag);
     const remaining = rest.due.length + rest.fresh.length;
     return (
       <section className="study study-result">
@@ -364,6 +366,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
           entries={sessionLog}
           reason={result}
           canContinue={result === "interrupted" ? true : remaining > 0}
+          tag={tag}
           onContinue={() => (result === "interrupted" ? resumeStudy() : onClose(true))}
           onFinish={() => onClose(false)}
         />

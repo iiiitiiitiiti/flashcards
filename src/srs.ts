@@ -191,9 +191,11 @@ export function buildStudyQueue(
   progressRecords: ProgressRecord[],
   now: Date,
   newCardsPerDay: number = NEW_CARDS_PER_DAY,
+  tag: string | null = null,
 ): StudyQueue {
   const progressByCard = new Map(progressRecords.map((record) => [record.cardId, record]));
   const today = dayKey(now);
+  // 新規枠はデッキ単位で数える。タグを変えるたびに枠が増えると、1日の上限が意味を失う
   const introducedToday = progressRecords.filter((record) => record.introducedDayKey === today).length;
   // 0 は無制限。数万問のデッキを早押しで回すときに使う
   const freshBudget = newCardsPerDay === 0 ? Number.POSITIVE_INFINITY : Math.max(0, newCardsPerDay - introducedToday);
@@ -202,6 +204,8 @@ export function buildStudyQueue(
   const fresh: DeckCard[] = [];
   let freshTotal = 0;
   for (const card of deck.cards) {
+    // 空文字は「全タグ」と同じ扱いにする（select の未選択が "" で来る）
+    if (tag && !(card.tags ?? []).includes(tag)) continue;
     const record = progressByCard.get(card.id);
     if (!record) {
       freshTotal += 1;

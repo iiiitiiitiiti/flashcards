@@ -240,3 +240,28 @@ export function saveStudyOrder(value: StudyOrder): void {
     // 保存できなくても既定（ランダム）で動く
   }
 }
+
+const STUDY_TAG_PREFIX = "flashcards:study-tag:";
+
+/**
+ * 学習で絞り込むタグ。**デッキごとに**覚える
+ * （デッキによってタグの体系が違うので、1つを共有すると別デッキで0枚になる）。
+ * 空文字・未保存は「全タグ」を意味する null を返す。
+ */
+export function loadStudyTag(deckId: string): string | null {
+  try {
+    const stored = localStorage.getItem(STUDY_TAG_PREFIX + deckId);
+    return stored === null || stored === "" ? null : stored;
+  } catch {
+    return null;
+  }
+}
+
+export function saveStudyTag(deckId: string, tag: string | null): void {
+  try {
+    if (tag === null || tag === "") localStorage.removeItem(STUDY_TAG_PREFIX + deckId);
+    else localStorage.setItem(STUDY_TAG_PREFIX + deckId, tag);
+  } catch {
+    // 保存できなくても、そのセッションの絞り込みは効く
+  }
+}
