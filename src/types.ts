@@ -53,6 +53,8 @@ export interface DeckCacheEntry {
   deckId: string;
   deck: Deck;
   commitSha: string;
+  /** 取得元ファイルの blob SHA。旧キャッシュには無いので省略可 */
+  blobSha?: string;
   fetchedAt: number;
 }
 

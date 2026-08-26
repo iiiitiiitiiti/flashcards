@@ -13,13 +13,19 @@ interface CommitResponse {
 }
 
 interface TreeResponse {
-  tree?: { path?: string; type?: string }[];
+  tree?: { path?: string; type?: string; sha?: string }[];
   truncated?: boolean;
+}
+
+export interface DeckListingEntry {
+  deckId: string;
+  /** そのファイル自身のハッシュ。中身が変わらなければ別コミットでも同じ値 */
+  blobSha: string;
 }
 
 export interface DeckListing {
   commitSha: string;
-  deckIds: string[];
+  decks: DeckListingEntry[];
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
@@ -62,7 +68,10 @@ async function apiRequest<T>(endpoint: string, token: string | null, init: Reque
   return { status: response.status, data };
 }
 
-/** main の最新コミット SHA と decks/*.json の一覧を取得する（API 2リクエスト） */
+/**
+ * main の最新コミット SHA と decks/*.json の一覧を取得する（API 2リクエスト）。
+ * 一覧にはファイルごとの blob SHA を含めるので、中身が変わったデッキだけ取り直せる。
+ */
 export async function listDecks(token: string | null): Promise<DeckListing> {
   const commit = await apiRequest<CommitResponse>(`/repos/${OWNER}/${REPOSITORY}/commits/${BRANCH}`, token);
   const commitSha = commit.data.sha;
@@ -77,11 +86,20 @@ export async function listDecks(token: string | null): Promise<DeckListing> {
   if (tree.data.truncated) {
     throw new Error("リポジトリのツリーが大きすぎるため、デッキ一覧を取得できませんでした");
   }
-  const deckIds = tree.data.tree
-    .filter((entry) => entry.type === "blob" && typeof entry.path === "string" && /^decks\/[^/]+\.json$/.test(entry.path))
-    .map((entry) => (entry.path as string).slice("decks/".length, -".json".length))
-    .sort((left, right) => left.localeCompare(right, "ja"));
-  return { commitSha, deckIds };
+  const decks = tree.data.tree
+    .filter(
+      (entry) =>
+        entry.type === "blob" &&
+        typeof entry.path === "string" &&
+        typeof entry.sha === "string" &&
+        /^decks\/[^/]+\.json$/.test(entry.path),
+    )
+    .map((entry) => ({
+      deckId: (entry.path as string).slice("decks/".length, -".json".length),
+      blobSha: entry.sha as string,
+    }))
+    .sort((left, right) => left.deckId.localeCompare(right.deckId, "ja"));
+  return { commitSha, decks };
 }
 
 interface RepositoryMetadata {
