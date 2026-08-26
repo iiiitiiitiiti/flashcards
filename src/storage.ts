@@ -1,4 +1,4 @@
-import { DEFAULT_RATING_THRESHOLDS, normalizeRatingThresholds } from "./srs";
+import { DEFAULT_RATING_THRESHOLDS, NEW_CARDS_PER_DAY, NEW_CARDS_PER_DAY_OPTIONS, normalizeRatingThresholds } from "./srs";
 import type { RatingThresholds, StudyMode } from "./types";
 
 const TOKEN_KEY = "flashcards:github-pat";
@@ -175,5 +175,25 @@ export function saveRatingThresholds(value: RatingThresholds): void {
     localStorage.setItem(RATING_THRESHOLDS_KEY, JSON.stringify(normalizeRatingThresholds(value)));
   } catch {
     // 保存できなくても既定の境界で動く
+  }
+}
+
+const NEW_CARDS_PER_DAY_KEY = "flashcards:new-cards-per-day";
+
+/** 1日に出す新規カードの上限（0 は無制限） */
+export function loadNewCardsPerDay(): number {
+  try {
+    const value = Number(localStorage.getItem(NEW_CARDS_PER_DAY_KEY));
+    return (NEW_CARDS_PER_DAY_OPTIONS as readonly number[]).includes(value) ? value : NEW_CARDS_PER_DAY;
+  } catch {
+    return NEW_CARDS_PER_DAY;
+  }
+}
+
+export function saveNewCardsPerDay(value: number): void {
+  try {
+    localStorage.setItem(NEW_CARDS_PER_DAY_KEY, String(value));
+  } catch {
+    // 保存できなくても既定枚数で動く
   }
 }

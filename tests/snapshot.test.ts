@@ -24,6 +24,11 @@ interface FetchPlan {
   listingError?: boolean;
 }
 
+function rawFetchCount(): number {
+  const mock = globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL][] } };
+  return mock.mock.calls.filter(([input]) => String(input).includes("raw.githubusercontent.com")).length;
+}
+
 function installFetch(plan: FetchPlan): void {
   vi.stubGlobal(
     "fetch",
@@ -136,5 +141,30 @@ describe("loadCachedSnapshot", () => {
     const snapshot = await loadCachedSnapshot();
     expect(snapshot.decks).toHaveLength(0);
     expect(snapshot.fetchedAt).toBeNull();
+  });
+});
+
+describe("refreshSnapshot のキャッシュ利用", () => {
+  it("同じコミットのデッキは raw を取り直さない", async () => {
+    installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
+    await refreshSnapshot(null);
+    const firstRawCalls = rawFetchCount();
+
+    installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
+    const snapshot = await refreshSnapshot(null);
+    expect(rawFetchCount()).toBe(0);
+    expect(firstRawCalls).toBe(1);
+    expect(snapshot.decks).toHaveLength(1);
+    expect(snapshot.decks[0].deck.cards[0].front).toBe("問");
+  });
+
+  it("コミットが変わったら取り直す", async () => {
+    installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
+    await refreshSnapshot(null);
+
+    installFetch({ commitSha: COMMIT_B, deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a", "新しい問") } });
+    const snapshot = await refreshSnapshot(null);
+    expect(rawFetchCount()).toBe(1);
+    expect(snapshot.decks[0].deck.cards[0].front).toBe("新しい問");
   });
 });

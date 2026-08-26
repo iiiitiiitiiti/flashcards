@@ -36,6 +36,8 @@ function parseTags(value: string): string[] | undefined {
 
 export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewProps) {
   const [search, setSearch] = useState("");
+  /** 実際に絞り込みへ使う検索語。数万枚のデッキで1文字ごとの全走査を避けるため遅らせる */
+  const [appliedSearch, setAppliedSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [saving, setSaving] = useState(false);
@@ -47,6 +49,11 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   const [progressByCard, setProgressByCard] = useState<Map<string, ProgressRecord>>(new Map());
   const [page, setPage] = useState(1);
   const canEdit = loadToken() !== "";
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setAppliedSearch(search), 200);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     void readProgress(deck.id).then((records) => {
@@ -75,13 +82,13 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   const orderById = useMemo(() => new Map(deck.cards.map((card, index) => [card.id, index + 1])), [deck]);
 
   const visibleCards = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
+    const keyword = appliedSearch.trim().toLowerCase();
     return deck.cards.filter((card) => {
       if (tagFilter && !(card.tags ?? []).includes(tagFilter)) return false;
       if (keyword === "") return true;
       return [card.front, card.back, card.note ?? ""].some((text) => text.toLowerCase().includes(keyword));
     });
-  }, [deck, search, tagFilter]);
+  }, [deck, appliedSearch, tagFilter]);
 
   const pageCount = Math.max(1, Math.ceil(visibleCards.length / CARDS_PER_PAGE));
   const currentPage = clampPage(page, pageCount);
@@ -93,7 +100,7 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   useEffect(() => {
     // 絞り込みを変えたら先頭ページへ戻す
     setPage(1);
-  }, [search, tagFilter, deck.id]);
+  }, [appliedSearch, tagFilter, deck.id]);
 
   function goToPage(next: number) {
     setPage(clampPage(next, pageCount));

@@ -7,7 +7,11 @@ import type { ProgressDTO, ProgressRecord, RatingThresholds, ReviewRating } from
 
 const scheduler = fsrs();
 
+/** 1日に出す新規カードの既定枚数。設定画面で変更できる */
 export const NEW_CARDS_PER_DAY = 10;
+
+/** 設定で選べる1日の新規枚数（0 は無制限） */
+export const NEW_CARDS_PER_DAY_OPTIONS = [10, 20, 50, 100, 0] as const;
 
 const TOKYO_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Tokyo",
@@ -148,11 +152,17 @@ export interface StudyQueue {
  * デッキのカードを走査して進捗をルックアップする方向で構築するため、
  * 削除済みカードの孤児進捗は自然に無視される。
  */
-export function buildStudyQueue(deck: Deck, progressRecords: ProgressRecord[], now: Date): StudyQueue {
+export function buildStudyQueue(
+  deck: Deck,
+  progressRecords: ProgressRecord[],
+  now: Date,
+  newCardsPerDay: number = NEW_CARDS_PER_DAY,
+): StudyQueue {
   const progressByCard = new Map(progressRecords.map((record) => [record.cardId, record]));
   const today = dayKey(now);
   const introducedToday = progressRecords.filter((record) => record.introducedDayKey === today).length;
-  const freshBudget = Math.max(0, NEW_CARDS_PER_DAY - introducedToday);
+  // 0 は無制限。数万問のデッキを早押しで回すときに使う
+  const freshBudget = newCardsPerDay === 0 ? Number.POSITIVE_INFINITY : Math.max(0, newCardsPerDay - introducedToday);
 
   const due: { card: DeckCard; dueAt: number }[] = [];
   const fresh: DeckCard[] = [];

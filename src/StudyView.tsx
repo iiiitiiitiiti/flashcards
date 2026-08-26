@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
 import { buildStudyQueue, dayKey, previewIntervals, rate, ratingFromElapsed } from "./srs";
-import { loadBuzzerSpeed, loadRatingThresholds } from "./storage";
+import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
 import type { ProgressRecord, ReviewRating, StudyMode } from "./types";
 
 interface StudyViewProps {
@@ -41,7 +41,7 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
 
 export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
-    const queue = buildStudyQueue(deck, initialProgress, new Date());
+    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay());
     return [
       ...queue.due.map((card) => ({ card, isNew: false })),
       ...queue.fresh.map((card) => ({ card, isNew: true })),

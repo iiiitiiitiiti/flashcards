@@ -45,3 +45,21 @@ Claude・人間ともに、デッキを追加・編集するときは必ずこ�
 1. 既存ファイルを読み、規約と id 採番を確認する
 2. `npm run validate:decks` で検証してから commit・push する
 3. push すると GitHub Actions（validate-decks）でも同じ検証が走る。失敗したら即修正する
+
+## クイズ.xlsx からの一括生成（quiz-* デッキ）
+
+`quiz-rikei` 〜 `quiz-sonota` の16デッキは、Google Drive の `クイズ/クイズ.xlsx`「ノンジャンルクイズ」シートから
+`scripts/import-quiz-xlsx.py` で生成している。**これらのファイルは手で編集しない**（次の生成で上書きされる）。
+問題を直すときは xlsx を直し、再生成する。
+
+```bash
+pip3 install openpyxl          # 初回のみ
+python3 scripts/import-quiz-xlsx.py
+npm run validate:decks
+```
+
+- 大ジャンル → デッキの対応はスクリプト内の `GENRE_DECKS` が正本。**一度決めたデッキ id は変更しない**
+- カード id は Q列「No」（静的な通し番号）の5桁ゼロ埋め。A列「No.」は `=ROW()-1` の数式で並べ替えるとずれるため使わない
+- Q列が数値でない行（60件）は問題文の SHA-1 先頭10桁に `h` を付けた id にする。**該当行の問題文を書き換えると id が変わり、その問題の学習進捗は失われる**
+- 問題の大ジャンルを xlsx 側で変更すると、そのカードは別デッキへ移動する。進捗は (デッキ id, カード id) で持つため、**ジャンルを変えると学習進捗は引き継がれない**
+- 1MB を超えるデッキ（quiz-koumin / quiz-rikei / quiz-seikatsu）は、GitHub Contents API の制限でアプリ内の「カード追加」「CSV取込」が使えない。xlsx 側で管理すること

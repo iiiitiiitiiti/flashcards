@@ -8,16 +8,18 @@ import {
   loadBuzzerSpeed,
   loadLastBackupAt,
   loadMotionPreference,
+  loadNewCardsPerDay,
   loadRatingThresholds,
   loadToken,
   saveBuzzerSpeed,
   saveLastBackupAt,
   saveMotionPreference,
+  saveNewCardsPerDay,
   saveRatingThresholds,
   saveToken,
   tokenPersistence,
 } from "./storage";
-import { normalizeRatingThresholds } from "./srs";
+import { NEW_CARDS_PER_DAY_OPTIONS, normalizeRatingThresholds } from "./srs";
 import type { DeckSnapshot, RatingThresholds } from "./types";
 
 interface SettingsViewProps {
@@ -42,6 +44,7 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   const [orphanMessage, setOrphanMessage] = useState<string | null>(null);
   const [crossfade, setCrossfade] = useState(loadMotionPreference() === "crossfade");
   const [buzzerSpeed, setBuzzerSpeed] = useState(loadBuzzerSpeed);
+  const [newCardsPerDay, setNewCardsPerDay] = useState(loadNewCardsPerDay);
   const [thresholds, setThresholds] = useState<RatingThresholds>(loadRatingThresholds);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -50,6 +53,11 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
     const preference = next ? "crossfade" : "full";
     saveMotionPreference(preference);
     document.documentElement.dataset.motion = preference;
+  }
+
+  function handleNewCardsPerDayChange(value: number) {
+    setNewCardsPerDay(value);
+    saveNewCardsPerDay(value);
   }
 
   function handleBuzzerSpeedChange(ms: number) {
@@ -179,6 +187,20 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
 
       <h2>学習</h2>
       <div className="settings-group">
+        <span className="sheet-label">1日に出す新規カード</span>
+        <div className="segmented">
+          {NEW_CARDS_PER_DAY_OPTIONS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={newCardsPerDay === value}
+              onClick={() => handleNewCardsPerDayChange(value)}
+            >
+              {value === 0 ? "無制限" : value}
+            </button>
+          ))}
+        </div>
+        <p className="muted">デッキごとではなく端末全体の設定です。数万問のデッキを回すときは大きめにしてください。</p>
         <span className="sheet-label">早押しの表示速度</span>
         <div className="segmented">
           {BUZZER_SPEEDS.map((speed) => (
