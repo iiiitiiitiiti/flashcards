@@ -41,6 +41,9 @@ export type StudyMode = "normal" | "buzzer";
 /** 出題順。sequential は復習（期限順）→新規（デッキ順）、random はセッション全体をシャッフル */
 export type StudyOrder = "sequential" | "random";
 
+/** 1日の新規カード上限をどの単位で数えるか。deck はデッキごと、all は全デッキ合計 */
+export type NewCardsScope = "deck" | "all";
+
 export interface ReviewLogEntry {
   reviewId: string;
   deckId: string;

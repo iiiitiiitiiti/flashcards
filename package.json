@@ -9,7 +9,8 @@
     "lint": "tsc -b --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
-    "validate:decks": "node scripts/validate-decks.mjs"
+    "validate:decks": "node scripts/validate-decks.mjs",
+    "decks:sync": "node scripts/sync-decks.mjs"
   },
   "dependencies": {
     "idb": "^8.0.3",

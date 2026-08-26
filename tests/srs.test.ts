@@ -3,6 +3,7 @@ import type { Deck } from "../src/deck";
 import {
   retentionPercent,
   buildStudyQueue,
+  countIntroducedToday,
   dayKey,
   DEFAULT_RATING_THRESHOLDS,
   NEW_CARDS_PER_DAY,
@@ -305,5 +306,84 @@ describe("buildStudyQueue のタグ絞り込み", () => {
     const emoji = taggedDeck({ a: ["★難しい"], b: ["👨‍👩‍👧‍👦家族"] });
     expect(buildStudyQueue(emoji, [], NOW, 10, "👨‍👩‍👧‍👦家族").fresh.map((card) => card.id)).toEqual(["b"]);
     expect(buildStudyQueue(emoji, [], NOW, 10, "★難しい").fresh.map((card) => card.id)).toEqual(["a"]);
+  });
+});
+
+describe("新規枠を全デッキ合計で数える（usedNewCardsToday）", () => {
+  function deck(cardIds: string[]): Deck {
+    return {
+      schemaVersion: 1,
+      id: "deck",
+      name: "テスト",
+      cards: cardIds.map((id) => ({ id, front: `Q${id}`, back: `A${id}` })),
+    };
+  }
+
+  const five = deck(["a", "b", "c", "d", "e"]);
+
+  it("渡さなければ、これまでどおりこのデッキの進捗から数える", () => {
+    const today = dayKey(NOW);
+    const introduced = [record("a", { introducedDayKey: today })];
+    expect(buildStudyQueue(five, introduced, NOW, 3).fresh).toHaveLength(2);
+  });
+
+  it("渡した枚数だけ枠を減らす（他デッキで使ったぶんを反映）", () => {
+    // このデッキでは1枚も出していないが、他デッキで今日3枚出している
+    expect(buildStudyQueue(five, [], NOW, 3, null, 3).fresh).toHaveLength(0);
+    expect(buildStudyQueue(five, [], NOW, 5, null, 3).fresh).toHaveLength(2);
+  });
+
+  it("使った枚数が上限を超えていても負の枠にならない", () => {
+    expect(buildStudyQueue(five, [], NOW, 3, null, 10).fresh).toHaveLength(0);
+  });
+
+  it("0（無制限）は単位に関係なく全部出す", () => {
+    expect(buildStudyQueue(five, [], NOW, 0, null, 999).fresh).toHaveLength(5);
+  });
+
+  it("0 を渡した場合は「まだ1枚も使っていない」として扱う", () => {
+    const today = dayKey(NOW);
+    // このデッキには今日ぶんの進捗があるが、外から 0 を渡したらそちらを優先する
+    const introduced = [record("a", { introducedDayKey: today }), record("b", { introducedDayKey: today })];
+    expect(buildStudyQueue(five, introduced, NOW, 3, null, 0).fresh).toHaveLength(3);
+  });
+
+  it("タグで絞っても、枠の消費数は渡された値のまま", () => {
+    const tagged: Deck = {
+      schemaVersion: 1,
+      id: "deck",
+      name: "テスト",
+      cards: [
+        { id: "a", front: "Q", back: "A", tags: ["理科"] },
+        { id: "b", front: "Q", back: "A", tags: ["理科"] },
+        { id: "c", front: "Q", back: "A", tags: ["地理"] },
+      ],
+    };
+    expect(buildStudyQueue(tagged, [], NOW, 3, "理科", 2).fresh.map((card) => card.id)).toEqual(["a"]);
+  });
+});
+
+describe("countIntroducedToday", () => {
+  it("今日はじめて出したカードだけを数える", () => {
+    const today = dayKey(NOW);
+    const records = [
+      record("a", { introducedDayKey: today }),
+      record("b", { introducedDayKey: today }),
+      record("c", { introducedDayKey: "2026-08-01" }),
+    ];
+    expect(countIntroducedToday(records, NOW)).toBe(2);
+  });
+
+  it("0件なら0", () => {
+    expect(countIntroducedToday([], NOW)).toBe(0);
+  });
+
+  it("デッキをまたいでも数える（全デッキ合計で使う）", () => {
+    const today = dayKey(NOW);
+    const records = [
+      record("a", { deckId: "deck1", introducedDayKey: today }),
+      record("a", { deckId: "deck2", introducedDayKey: today }),
+    ];
+    expect(countIntroducedToday(records, NOW)).toBe(2);
   });
 });

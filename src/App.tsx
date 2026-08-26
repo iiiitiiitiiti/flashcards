@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { pruneReviewLog, readProgress, upsertDeckCacheEntry } from "./db";
+import { pruneReviewLog, readAllProgress, readProgress, upsertDeckCacheEntry } from "./db";
 import { requestPersistentStorage } from "./quota";
 import { DeckDetailView } from "./DeckDetailView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
-import { buildStudyQueue, formatPercent, retentionPercent } from "./srs";
+import { buildStudyQueue, countIntroducedToday, formatPercent, retentionPercent } from "./srs";
 import {
   loadDeckSort,
   loadMotionPreference,
   loadNewCardsPerDay,
+  loadNewCardsScope,
   loadSessionSize,
   loadStudyOrder,
   loadStudyMode,
@@ -77,13 +78,21 @@ export function App() {
   // 開始シートで選んでいるタグと、件数を出すための進捗（シートを開いたときに1回読む）
   const [startTag, setStartTag] = useState<string | null>(null);
   const [startProgress, setStartProgress] = useState<ProgressRecord[] | null>(null);
+  /** 全デッキ合計で数えるときの、今日すでに使った新規枠。デッキごとの設定なら undefined */
+  const [usedNewCardsToday, setUsedNewCardsToday] = useState<number | undefined>(undefined);
 
   const updateStats = useCallback(async (target: DeckSnapshot) => {
     const now = new Date();
     const next = new Map<string, DeckStats>();
+    // 全デッキ合計で数えるときは、進捗を1回だけ読んでデッキへ配る
+    const allRecords = loadNewCardsScope() === "all" ? await readAllProgress() : null;
+    const usedNewCardsToday = allRecords === null ? undefined : countIntroducedToday(allRecords, now);
+    setUsedNewCardsToday(usedNewCardsToday);
     for (const entry of target.decks) {
-      const records = await readProgress(entry.deckId);
-      const queue = buildStudyQueue(entry.deck, records, now, loadNewCardsPerDay());
+      const records = allRecords === null
+        ? await readProgress(entry.deckId)
+        : allRecords.filter((record) => record.deckId === entry.deckId);
+      const queue = buildStudyQueue(entry.deck, records, now, loadNewCardsPerDay(), null, usedNewCardsToday);
       const cardIds = new Set(entry.deck.cards.map((card) => card.id));
       // ホームのドーナツとリザルトのゲージで同じ数字を出す（進捗の無いカードは 0 として効くので records だけ渡せばよい）
       const touched = records.filter((record) => cardIds.has(record.cardId)).map((record) => record.progress);
@@ -157,9 +166,9 @@ export function App() {
   /** 選んでいるタグでいま学習できる枚数。進捗を読み終えるまでは null */
   const startCounts = useMemo(() => {
     if (!startingEntry || startProgress === null) return null;
-    const queue = buildStudyQueue(startingEntry.deck, startProgress, new Date(), loadNewCardsPerDay(), startTag);
+    const queue = buildStudyQueue(startingEntry.deck, startProgress, new Date(), loadNewCardsPerDay(), startTag, usedNewCardsToday);
     return { due: queue.due.length, fresh: queue.fresh.length };
-  }, [startingEntry, startProgress, startTag]);
+  }, [startingEntry, startProgress, startTag, usedNewCardsToday]);
 
   const deckItems = useMemo<(DeckListItem & { entry: DeckCacheEntry })[]>(() => {
     if (!snapshot) return [];
@@ -188,6 +197,22 @@ export function App() {
     saveDeckSort(next);
   }
 
+  /**
+   * セッションを組むのに要る進捗を読む。
+   * 「全デッキ合計」のときは、今日すでに使った新規枠もそのとき数え直す
+   * （ホームへ戻らずに「つづける」で再開する経路があるため、stats の値は当てにできない）
+   */
+  const readStudyContext = useCallback(async (deckId: string) => {
+    if (loadNewCardsScope() === "deck") {
+      return { progress: await readProgress(deckId), used: undefined };
+    }
+    const all = await readAllProgress();
+    return {
+      progress: all.filter((record) => record.deckId === deckId),
+      used: countIntroducedToday(all, new Date()),
+    };
+  }, []);
+
   async function startStudy(deckId: string, mode: StudyMode, sessionSize: SessionSize, order: StudyOrder, tag: string | null) {
     // 次回の既定値として選択を覚えておく（タグだけはデッキごとに覚える）
     saveStudyMode(mode);
@@ -195,7 +220,8 @@ export function App() {
     saveStudyOrder(order);
     saveStudyTag(deckId, tag);
     setStartingDeckId(null);
-    const progress = await readProgress(deckId);
+    const { progress, used } = await readStudyContext(deckId);
+    setUsedNewCardsToday(used);
     setSessionId((id) => id + 1);
     setView({ type: "study", deckId, progress, mode, sessionSize, order, tag, sessionId: sessionId + 1 });
   }
@@ -206,7 +232,10 @@ export function App() {
     setStartTag(remembered !== null && deckTags.includes(remembered) ? remembered : null);
     setStartProgress(null);
     setStartingDeckId(deckId);
-    void readProgress(deckId).then(setStartProgress);
+    void readStudyContext(deckId).then(({ progress, used }) => {
+      setUsedNewCardsToday(used);
+      setStartProgress(progress);
+    });
   }
 
   function closeStudy(restart: boolean) {
@@ -275,6 +304,7 @@ export function App() {
             sessionSize={view.sessionSize}
             order={view.order}
             tag={view.tag}
+            usedNewCardsToday={usedNewCardsToday}
             onClose={closeStudy}
           />
         </main>

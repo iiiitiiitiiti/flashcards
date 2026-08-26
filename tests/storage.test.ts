@@ -11,7 +11,7 @@ Object.defineProperty(globalThis, "localStorage", {
     clear: () => store.clear(),
   },
 });
-import { loadNewCardsPerDay, loadSessionSize, loadStudyOrder, loadStudyTag, saveNewCardsPerDay, saveStudyOrder, saveStudyTag } from "../src/storage";
+import { loadNewCardsPerDay, loadNewCardsScope, loadSessionSize, loadStudyOrder, loadStudyTag, saveNewCardsPerDay, saveNewCardsScope, saveStudyOrder, saveStudyTag } from "../src/storage";
 import { NEW_CARDS_PER_DAY } from "../src/srs";
 
 describe("loadNewCardsPerDay", () => {
@@ -94,5 +94,27 @@ describe("loadStudyTag / saveStudyTag", () => {
   it("保存済みの空文字も null として読む", () => {
     localStorage.setItem("flashcards:study-tag:quiz-sports", "");
     expect(loadStudyTag("quiz-sports")).toBeNull();
+  });
+});
+
+describe("loadNewCardsScope", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("未設定ならデッキごと（従来の挙動）", () => {
+    expect(loadNewCardsScope()).toBe("deck");
+  });
+
+  it("保存した値を返す", () => {
+    saveNewCardsScope("all");
+    expect(loadNewCardsScope()).toBe("all");
+    saveNewCardsScope("deck");
+    expect(loadNewCardsScope()).toBe("deck");
+  });
+
+  it("壊れた値はデッキごとへ落とす", () => {
+    localStorage.setItem("flashcards:new-cards-scope", "でたらめ");
+    expect(loadNewCardsScope()).toBe("deck");
   });
 });

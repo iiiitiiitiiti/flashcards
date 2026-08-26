@@ -186,19 +186,29 @@ export interface StudyQueue {
  * デッキのカードを走査して進捗をルックアップする方向で構築するため、
  * 削除済みカードの孤児進捗は自然に無視される。
  */
+/** 今日はじめて出したカードの枚数（1日の新規上限をどれだけ使ったか） */
+export function countIntroducedToday(records: ProgressRecord[], now: Date): number {
+  const today = dayKey(now);
+  return records.filter((record) => record.introducedDayKey === today).length;
+}
+
 export function buildStudyQueue(
   deck: Deck,
   progressRecords: ProgressRecord[],
   now: Date,
   newCardsPerDay: number = NEW_CARDS_PER_DAY,
   tag: string | null = null,
+  /**
+   * 今日すでに新規として出した枚数。省略すると **このデッキの進捗から数える**（＝デッキごとの上限）。
+   * 全デッキ合計で制限するときは、呼び出し側が全デッキぶんを数えて渡す。
+   */
+  usedNewCardsToday?: number,
 ): StudyQueue {
   const progressByCard = new Map(progressRecords.map((record) => [record.cardId, record]));
-  const today = dayKey(now);
-  // 新規枠はデッキ単位で数える。タグを変えるたびに枠が増えると、1日の上限が意味を失う
-  const introducedToday = progressRecords.filter((record) => record.introducedDayKey === today).length;
+  // タグでは絞らない。タグを変えるたびに枠が増えると、1日の上限が意味を失う
+  const used = usedNewCardsToday ?? countIntroducedToday(progressRecords, now);
   // 0 は無制限。数万問のデッキを早押しで回すときに使う
-  const freshBudget = newCardsPerDay === 0 ? Number.POSITIVE_INFINITY : Math.max(0, newCardsPerDay - introducedToday);
+  const freshBudget = newCardsPerDay === 0 ? Number.POSITIVE_INFINITY : Math.max(0, newCardsPerDay - used);
 
   const due: { card: DeckCard; dueAt: number }[] = [];
   const fresh: DeckCard[] = [];

@@ -1,6 +1,6 @@
 import { DEFAULT_RATING_THRESHOLDS, NEW_CARDS_PER_DAY, NEW_CARDS_PER_DAY_OPTIONS, normalizeRatingThresholds } from "./srs";
 import { DECK_SORTS, type DeckSort } from "./decklist";
-import type { RatingThresholds, StudyMode, StudyOrder } from "./types";
+import type { NewCardsScope, RatingThresholds, StudyMode, StudyOrder } from "./types";
 
 const TOKEN_KEY = "flashcards:github-pat";
 
@@ -199,6 +199,28 @@ export function saveNewCardsPerDay(value: number): void {
     localStorage.setItem(NEW_CARDS_PER_DAY_KEY, String(value));
   } catch {
     // 保存できなくても既定枚数で動く
+  }
+}
+
+const NEW_CARDS_SCOPE_KEY = "flashcards:new-cards-scope";
+
+/**
+ * 新規カードの上限をどの単位で数えるか。既定は「デッキごと」（従来の挙動）。
+ * 「全デッキ合計」にすると、先に開いたデッキから枠を使う。
+ */
+export function loadNewCardsScope(): NewCardsScope {
+  try {
+    return localStorage.getItem(NEW_CARDS_SCOPE_KEY) === "all" ? "all" : "deck";
+  } catch {
+    return "deck";
+  }
+}
+
+export function saveNewCardsScope(value: NewCardsScope): void {
+  try {
+    localStorage.setItem(NEW_CARDS_SCOPE_KEY, value);
+  } catch {
+    // 保存できなくてもデッキごとの上限で動く
   }
 }
 

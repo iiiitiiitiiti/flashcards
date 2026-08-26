@@ -10,18 +10,20 @@ import {
   loadLastBackupAt,
   loadMotionPreference,
   loadNewCardsPerDay,
+  loadNewCardsScope,
   loadRatingThresholds,
   loadToken,
   saveBuzzerSpeed,
   saveLastBackupAt,
   saveMotionPreference,
   saveNewCardsPerDay,
+  saveNewCardsScope,
   saveRatingThresholds,
   saveToken,
   tokenPersistence,
 } from "./storage";
 import { NEW_CARDS_PER_DAY_OPTIONS, normalizeRatingThresholds } from "./srs";
-import type { DeckSnapshot, RatingThresholds } from "./types";
+import type { DeckSnapshot, NewCardsScope, RatingThresholds } from "./types";
 
 interface SettingsViewProps {
   snapshot: DeckSnapshot | null;
@@ -35,6 +37,7 @@ function formatTimestamp(value: number): string {
 }
 
 export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
+  const deckCount = snapshot?.decks.length ?? null;
   const [token, setToken] = useState(loadToken());
   const [persistToken, setPersistToken] = useState(tokenPersistence() !== "session");
   const [tokenMessage, setTokenMessage] = useState<string | null>(null);
@@ -46,6 +49,7 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   const [crossfade, setCrossfade] = useState(loadMotionPreference() === "crossfade");
   const [buzzerSpeed, setBuzzerSpeed] = useState(loadBuzzerSpeed);
   const [newCardsPerDay, setNewCardsPerDay] = useState(loadNewCardsPerDay);
+  const [newCardsScope, setNewCardsScope] = useState<NewCardsScope>(loadNewCardsScope);
   const [thresholds, setThresholds] = useState<RatingThresholds>(loadRatingThresholds);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -59,6 +63,11 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   function handleNewCardsPerDayChange(value: number) {
     setNewCardsPerDay(value);
     saveNewCardsPerDay(value);
+  }
+
+  function handleNewCardsScopeChange(value: NewCardsScope) {
+    setNewCardsScope(value);
+    saveNewCardsScope(value);
   }
 
   function handleBuzzerSpeedChange(ms: number) {
@@ -206,7 +215,22 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
             </button>
           ))}
         </div>
-        <p className="muted">デッキごとではなく端末全体の設定です。数万問のデッキを回すときは大きめにしてください。</p>
+        <span className="sheet-label">この枚数を数える単位</span>
+        <div className="segmented">
+          <button type="button" aria-pressed={newCardsScope === "deck"} onClick={() => handleNewCardsScopeChange("deck")}>
+            デッキごと
+          </button>
+          <button type="button" aria-pressed={newCardsScope === "all"} onClick={() => handleNewCardsScopeChange("all")}>
+            全デッキ合計
+          </button>
+        </div>
+        <p className="muted">
+          {newCardsPerDay === 0
+            ? "「無制限」を選んでいる間は、この単位の設定は効きません。"
+            : newCardsScope === "deck"
+              ? `デッキごとに1日 ${newCardsPerDay} 枚まで。${deckCount !== null ? `いまは ${deckCount} デッキあるので、全部開くと最大 ${newCardsPerDay * deckCount} 枚入ります。` : ""}新規は数日かけて復習が返ってくるので、毎日の復習が増えすぎるときは「全デッキ合計」にしてください。`
+              : `全デッキ合わせて1日 ${newCardsPerDay} 枚まで。先に開いたデッキから枠を使います。`}
+        </p>
         <span className="sheet-label">早押しの表示速度</span>
         <div className="segmented">
           {BUZZER_SPEEDS.map((speed) => (
