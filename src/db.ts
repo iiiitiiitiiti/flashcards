@@ -225,3 +225,8 @@ export async function setCardHidden(deckId: string, cardId: string, hidden: bool
   if (hidden) await db.put("hiddenCards", { deckId, cardId, hiddenAt: Date.now() });
   else await db.delete("hiddenCards", [deckId, cardId]);
 }
+
+export async function readAllReviewLog(): Promise<ReviewLogEntry[]> {
+  const db = await getDb();
+  return db.getAll("reviewLog");
+}

@@ -27,7 +27,6 @@ import type { DeckSnapshot, NewCardsScope, RatingThresholds } from "./types";
 
 interface SettingsViewProps {
   snapshot: DeckSnapshot | null;
-  onClose: () => void;
 }
 
 function formatTimestamp(value: number): string {
@@ -36,7 +35,7 @@ function formatTimestamp(value: number): string {
   return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
+export function SettingsView({ snapshot }: SettingsViewProps) {
   const deckCount = snapshot?.decks.length ?? null;
   const [token, setToken] = useState(loadToken());
   const [persistToken, setPersistToken] = useState(tokenPersistence() !== "session");
@@ -172,9 +171,8 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
 
   return (
     <section>
-      <header className="app-header">
-        <button type="button" className="icon-button" onClick={onClose} aria-label="戻る">←</button>
-        <h1>設定</h1>
+      <header className="app-header app-header-centered">
+        <h1>各種設定</h1>
       </header>
 
       <h2>GitHub トークン（編集用）</h2>

@@ -3,6 +3,7 @@ import { pruneReviewLog, readAllHiddenCards, readAllProgress, readCardNotes, rea
 import { requestPersistentStorage } from "./quota";
 import type { Deck } from "./deck";
 import { DeckDetailView } from "./DeckDetailView";
+import { StatsView } from "./StatsView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
 import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue, countIntroducedToday, formatPercent, retentionPercent } from "./srs";
@@ -54,7 +55,42 @@ type View =
   | { type: "home" }
   | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder; tag: string | null; notes: Map<string, string>; sessionId: number }
   | { type: "deck"; deckId: string }
+  | { type: "stats" }
   | { type: "settings" };
+
+/** 下ナビのタブ。学習中とカード一覧では出さない（作業に集中させる） */
+const NAV_TABS = [
+  { type: "home", label: "デッキ" },
+  { type: "stats", label: "統計" },
+  { type: "settings", label: "各種設定" },
+] as const;
+
+type NavTab = (typeof NAV_TABS)[number]["type"];
+
+function NavIcon({ tab }: { tab: NavTab }) {
+  const common = { viewBox: "0 0 24 24", width: 22, height: 22, fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+  if (tab === "home") {
+    return (
+      <svg {...common} aria-hidden="true">
+        <rect x="4" y="3" width="12" height="18" rx="2" />
+        <path d="M18 5v14M8 7h4M8 11h4" />
+      </svg>
+    );
+  }
+  if (tab === "stats") {
+    return (
+      <svg {...common} aria-hidden="true">
+        <path d="M6 20v-6M12 20V6M18 20v-9" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common} aria-hidden="true">
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 14a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.3a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-2.8-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.5 13H3a2 2 0 1 1 0-4h.2A1.6 1.6 0 0 0 4.3 6.2l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V2a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 2.8 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.4 1z" />
+    </svg>
+  );
+}
 
 /** 非表示のカードを取り除いたデッキ。学習にも統計にも、これを使う */
 function visibleDeck(deck: Deck, hiddenIds: Set<string> | undefined): Deck {
@@ -273,16 +309,44 @@ export function App() {
     if (snapshot) void updateStats(snapshot);
   }
 
+  /** タブを切り替える。設定から離れるときは、変えた内容を反映するために取り直す */
+  function goToTab(tab: NavTab) {
+    const leavingSettings = view.type === "settings" && tab !== "settings";
+    setView({ type: tab });
+    if (leavingSettings) void refresh();
+  }
+
+  const bottomNav = (
+    <nav className="bottom-nav" aria-label="画面の切り替え">
+      {NAV_TABS.map((tab) => (
+        <button
+          key={tab.type}
+          type="button"
+          className={`nav-tab${view.type === tab.type ? " nav-tab-current" : ""}`}
+          aria-current={view.type === tab.type ? "page" : undefined}
+          onClick={() => goToTab(tab.type)}
+        >
+          <NavIcon tab={tab.type} />
+          <span>{tab.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+
   if (view.type === "settings") {
     return (
-      <main className="app">
-        <SettingsView
-          snapshot={snapshot}
-          onClose={() => {
-            setView({ type: "home" });
-            void refresh();
-          }}
-        />
+      <main className="app app-with-nav">
+        <SettingsView snapshot={snapshot} />
+        {bottomNav}
+      </main>
+    );
+  }
+
+  if (view.type === "stats") {
+    return (
+      <main className="app app-with-nav">
+        <StatsView snapshot={snapshot} />
+        {bottomNav}
       </main>
     );
   }
@@ -347,14 +411,13 @@ export function App() {
   }
 
   return (
-    <main className="app">
+    <main className="app app-with-nav">
       <header className="app-header">
         <h1>暗記カード</h1>
         <div className="button-row">
           <button type="button" onClick={() => void refresh()} disabled={refreshing}>
             {refreshing ? "更新中…" : "更新"}
           </button>
-          <button type="button" onClick={() => setView({ type: "settings" })}>設定</button>
         </div>
       </header>
       {snapshot === null ? (
@@ -499,6 +562,7 @@ export function App() {
           </div>
         </div>
       )}
+      {bottomNav}
     </main>
   );
 }

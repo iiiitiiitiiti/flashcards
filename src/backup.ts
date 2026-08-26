@@ -125,6 +125,10 @@ function validateReviewLogEntry(value: unknown, index: number): asserts value is
   if (typeof entry.deckId !== "string" || typeof entry.cardId !== "string") throw new Error(`${label}: deckId / cardId が不正です`);
   if (![1, 2, 3, 4].includes(entry.rating as ReviewRating)) throw new Error(`${label}: rating が不正です`);
   if (typeof entry.reviewedAt !== "number" || !Number.isFinite(entry.reviewedAt)) throw new Error(`${label}: reviewedAt が不正です`);
+  // 古いログには無い
+  if (entry.elapsedMs !== undefined && (typeof entry.elapsedMs !== "number" || !Number.isFinite(entry.elapsedMs) || entry.elapsedMs < 0)) {
+    throw new Error(`${label}: elapsedMs が不正です`);
+  }
 }
 
 /**
