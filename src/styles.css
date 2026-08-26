@@ -364,7 +364,20 @@ body.study-lock {
 }
 
 .drag-layer.drag-settle {
-  transition: transform 0.2s ease;
+  /* 指を離して戻るとき。行き過ぎてから収まるバネ風の曲線でカードらしい重みを出す */
+  transition: transform 0.42s cubic-bezier(0.18, 1.25, 0.35, 1);
+}
+
+.drag-layer.drag-fly {
+  /* 評価が決まったカードを画面外へ送り出す。時間は StudyView の FLY_OUT_MS と揃える */
+  transition: transform 0.26s cubic-bezier(0.32, 0, 0.67, 0), opacity 0.26s ease-in;
+  opacity: 0.15;
+}
+
+:root[data-motion="crossfade"] .drag-layer.drag-settle,
+:root[data-motion="crossfade"] .drag-layer.drag-fly {
+  transition: none;
+  opacity: 1;
 }
 
 .swipe-badge {
