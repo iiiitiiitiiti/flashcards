@@ -139,6 +139,19 @@ export function validateProgressDTO(value: unknown): ProgressDTO {
   return dto as unknown as ProgressDTO;
 }
 
+/** フェーズ（FSRS の reps）は10を満点として扱う */
+export const PHASE_FULL = 10;
+
+/**
+ * デッキ全体の達成率（%）。全カードのフェーズ合計 ÷ (枚数 × 10)。
+ * 1セッションの出来ではなく、そのデッキがどこまで積み上がったかを表す。
+ */
+export function achievementPercent(phases: number[], cardCount: number): number {
+  if (cardCount <= 0) return 0;
+  const sum = phases.reduce((total, phase) => total + Math.min(Math.max(0, phase), PHASE_FULL), 0);
+  return Math.min(100, (sum / (cardCount * PHASE_FULL)) * 100);
+}
+
 /** Fisher-Yates で並びを崩した新しい配列を返す（元の配列は変更しない） */
 export function shuffled<T>(items: T[]): T[] {
   const result = [...items];
