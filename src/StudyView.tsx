@@ -83,11 +83,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
   }, [current, reviewedCount]);
 
   useEffect(() => {
-    if (mode !== "buzzer" || !current || revealed) return;
+    if (mode !== "buzzer" || !current || revealed || buzzedAt !== null) return;
     if (shownChars >= buzzerChars.length) return;
     const timer = window.setTimeout(() => setShownChars((count) => count + 1), buzzerSpeed);
     return () => window.clearTimeout(timer);
-  }, [mode, current, revealed, shownChars, buzzerChars.length, buzzerSpeed]);
+  }, [mode, current, revealed, buzzedAt, shownChars, buzzerChars.length, buzzerSpeed]);
 
   // 左右スワイプ評価（答え表示中のみ）。左=もう一度、右=経過秒数で自動振り分け
   const SWIPE_THRESHOLD = 80;
@@ -124,7 +124,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
     setDragX(0);
     if (cancelled || !drag.horizontal) return;
     if (dx <= -SWIPE_THRESHOLD) void handleRate(1);
-    else if (dx >= SWIPE_THRESHOLD) void handleRate(swipeRating());
+    else if (dx >= SWIPE_THRESHOLD) void handleRate(mode === "buzzer" ? 3 : swipeRating());
   }
 
   /** 右スワイプの評価。問題が表示されてからの経過時間で 簡単/普通/難しい/もう一度 を決める */
@@ -136,11 +136,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
     setRevealed(true);
   }
 
-  /** 早押し: 読み上げを止めて答えを表示する */
-  function buzz() {
+  /** 早押しのタップ: 1回目で読み上げを止め、2回目で答えを表示する */
+  function handleBuzzerTap() {
     if (revealed) return;
-    setBuzzedAt(shownChars);
-    reveal();
+    if (buzzedAt === null) setBuzzedAt(shownChars);
+    else reveal();
   }
 
   const progressPercent = reviewedCount + queue.length === 0 ? 100 : Math.round((reviewedCount / (reviewedCount + queue.length)) * 100);
@@ -241,23 +241,56 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
         <div className="study-scroll">
           <div
             key={`${reviewedCount}-${current.card.id}`}
-            className="study-card buzzer-card"
-            onClick={buzz}
+            className="flip-scene"
+            onClick={() => {
+              if (dragRef.current.suppressClick) {
+                dragRef.current.suppressClick = false;
+                return;
+              }
+              handleBuzzerTap();
+            }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={(event) => endDrag(event, false)}
+            onPointerCancel={(event) => endDrag(event, true)}
             role="button"
             tabIndex={-1}
-            aria-label={revealed ? "答えを表示中" : "タップで押す"}
+            aria-label={
+              revealed
+                ? "左スワイプで不正解、右スワイプで正解"
+                : buzzedAt === null
+                  ? "タップで押す"
+                  : "タップで答えを表示"
+            }
           >
-            {revealed ? (
-              <>
-                <div className="study-front">{current.card.front}</div>
-                <hr />
-                <div className="study-back">{current.card.back}</div>
-                {current.card.note && <div className="study-note muted">{current.card.note}</div>}
-              </>
-            ) : (
-              <div className="study-front buzzer-text">
-                {buzzerChars.slice(0, shownChars).join("")}
-                <span className="buzzer-cursor" aria-hidden="true" />
+            <div
+              className={`drag-layer${dragX === 0 ? " drag-settle" : ""}`}
+              style={{ transform: dragX === 0 ? undefined : `translateX(${dragX}px) rotate(${dragX * 0.04}deg)` }}
+            >
+              <div className="study-card buzzer-card">
+                {revealed ? (
+                  <>
+                    <div className="study-front">{current.card.front}</div>
+                    <hr />
+                    <div className="study-back">{current.card.back}</div>
+                    {current.card.note && <div className="study-note muted">{current.card.note}</div>}
+                  </>
+                ) : (
+                  <div className="study-front buzzer-text">
+                    {buzzerChars.slice(0, buzzedAt ?? shownChars).join("")}
+                    {buzzedAt === null && <span className="buzzer-cursor" aria-hidden="true" />}
+                  </div>
+                )}
+              </div>
+            </div>
+            {dragX < -12 && (
+              <div className="swipe-badge swipe-badge-left" style={{ opacity: Math.min(1, -dragX / SWIPE_THRESHOLD) }}>
+                不正解{intervals ? `・${intervals[1]}` : ""}
+              </div>
+            )}
+            {dragX > 12 && (
+              <div className="swipe-badge swipe-badge-right" style={{ opacity: Math.min(1, dragX / SWIPE_THRESHOLD) }}>
+                正解{intervals ? `・${intervals[3]}` : ""}
               </div>
             )}
           </div>
@@ -273,14 +306,19 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, onClose }:
                 </button>
               ))}
             </div>
-          ) : (
-            <button type="button" className="primary reveal-button buzz-button" onClick={buzz}>
+          ) : buzzedAt === null ? (
+            <button type="button" className="primary reveal-button buzz-button" onClick={handleBuzzerTap}>
               押す
+            </button>
+          ) : (
+            <button type="button" className="primary reveal-button" onClick={reveal}>
+              答えを表示
             </button>
           )}
           <p className="muted study-remaining">
             残り {queue.length} 枚
             {buzzedAt !== null ? `・${buzzedAt}/${buzzerChars.length} 文字で押した` : `・${shownChars}/${buzzerChars.length} 文字`}
+            {revealed ? "・スワイプ: ← 不正解 / 正解 →" : ""}
           </p>
         </footer>
       </section>

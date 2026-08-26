@@ -35,6 +35,7 @@ body {
 
 body {
   margin: 0;
+  touch-action: manipulation;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   background: var(--color-bg);
   color: var(--color-text);
@@ -856,9 +857,9 @@ textarea {
 /* ===== 早押しクイズ ===== */
 
 .buzzer-card {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+  /* .drag-layer の中に敷くので、通常カードの表裏面と同じく絶対配置にする */
+  position: absolute;
+  inset: 0;
 }
 
 .buzzer-text {
