@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Deck, DeckCard } from "./deck";
 import { saveReview } from "./db";
-import { achievementPercent, buildStudyQueue, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, shuffled } from "./srs";
+import { describeStorageError } from "./quota";
+import { buildStudyQueue, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
 import { splitGraphemes } from "./text";
@@ -264,8 +265,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
         rating,
         reviewedAt: now.getTime(),
       });
-    } catch {
-      setError("進捗を保存できませんでした。もう一度お試しください。");
+    } catch (error) {
+      setError(describeStorageError(error, "進捗を保存"));
       // 飛ばしかけたカードは手元へ戻す
       setFlying(false);
       setDragX(0);
@@ -344,7 +345,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
   }
 
   if (result !== null) {
-    // デッキ全体の達成率。セッション中の評価も progressRef に入っているので最新の値になる
+    // デッキ全体の定着率。セッション中の評価も progressRef に入っているので最新の値になる
     const phases = deck.cards.map((card) => {
       const progress = progressRef.current.get(card.id)?.progress;
       return { reps: progress?.reps ?? 0, state: progress?.state ?? 0 };
@@ -358,7 +359,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, onC
         {header}
         <StudyResult
           mode={mode}
-          percent={achievementPercent(phases, deck.cards.length)}
+          percent={retentionPercent(phases, deck.cards.length)}
           phaseGain={phaseGain}
           entries={sessionLog}
           reason={result}

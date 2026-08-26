@@ -10,6 +10,7 @@ interface FlashcardsDB extends DBSchema {
   reviewLog: {
     key: string;
     value: ReviewLogEntry;
+    indexes: { byReviewedAt: number };
   };
   deckCache: {
     key: string;
@@ -22,18 +23,30 @@ interface FlashcardsDB extends DBSchema {
 }
 
 const DB_NAME = "flashcards-db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+const DAY_MS = 86_400_000;
+
+/** 評価ログの保持期間（日）。学習の予定には使っていないので、古いものは消してよい */
+export const REVIEW_LOG_RETENTION_DAYS = 400;
+/** 保持期間内でも、これを超えるぶんは古い順に消す */
+export const REVIEW_LOG_MAX_ENTRIES = 20_000;
 
 let dbPromise: Promise<IDBPDatabase<FlashcardsDB>> | undefined;
 
 export function getDb(): Promise<IDBPDatabase<FlashcardsDB>> {
   dbPromise ??= openDB<FlashcardsDB>(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      const progress = db.createObjectStore("cardProgress", { keyPath: ["deckId", "cardId"] });
-      progress.createIndex("byDeck", "deckId");
-      db.createObjectStore("reviewLog", { keyPath: "reviewId" });
-      db.createObjectStore("deckCache", { keyPath: "deckId" });
-      db.createObjectStore("importDrafts", { keyPath: "draftId" });
+    upgrade(db, oldVersion, _newVersion, tx) {
+      if (oldVersion < 1) {
+        const progress = db.createObjectStore("cardProgress", { keyPath: ["deckId", "cardId"] });
+        progress.createIndex("byDeck", "deckId");
+        db.createObjectStore("reviewLog", { keyPath: "reviewId" });
+        db.createObjectStore("deckCache", { keyPath: "deckId" });
+        db.createObjectStore("importDrafts", { keyPath: "draftId" });
+      }
+      if (oldVersion < 2) {
+        // 古いログを日時で引いて消せるようにする（v1 で作った DB にも後付けする）
+        tx.objectStore("reviewLog").createIndex("byReviewedAt", "reviewedAt");
+      }
     },
   });
   return dbPromise;
@@ -131,4 +144,31 @@ export async function deleteProgressByKeys(keys: [string, string][]): Promise<vo
     await tx.store.delete(key);
   }
   await tx.done;
+}
+
+/**
+ * 古い評価ログを間引く。ログは出題の判断には使っておらず、バックアップに残す履歴なので消してよい。
+ * 保持期間を過ぎたものと、それでも上限を超えるぶんを古い順に消し、削除件数を返す。
+ */
+export async function pruneReviewLog(
+  now = Date.now(),
+  retentionDays = REVIEW_LOG_RETENTION_DAYS,
+  maxEntries = REVIEW_LOG_MAX_ENTRIES,
+): Promise<number> {
+  const db = await getDb();
+  const tx = db.transaction("reviewLog", "readwrite");
+  const cutoff = now - retentionDays * DAY_MS;
+  let overflow = Math.max(0, (await tx.store.count()) - maxEntries);
+  let deleted = 0;
+  // 古い順に走査し、消す理由が無くなった時点で止める
+  let cursor = await tx.store.index("byReviewedAt").openCursor();
+  while (cursor) {
+    if (overflow === 0 && cursor.value.reviewedAt >= cutoff) break;
+    if (overflow > 0) overflow -= 1;
+    await cursor.delete();
+    deleted += 1;
+    cursor = await cursor.continue();
+  }
+  await tx.done;
+  return deleted;
 }

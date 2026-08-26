@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Deck } from "../src/deck";
 import {
-  achievementPercent,
+  retentionPercent,
   buildStudyQueue,
   dayKey,
   DEFAULT_RATING_THRESHOLDS,
@@ -206,37 +206,37 @@ describe("shuffled", () => {
   });
 });
 
-describe("achievementPercent", () => {
+describe("retentionPercent（定着率）", () => {
   const review = (reps: number) => ({ reps, state: 2 });
   const learning = (reps: number) => ({ reps, state: 1 });
 
   it("フェーズ10かつ定着なら満点、未学習だけなら0%", () => {
-    expect(achievementPercent([review(10), review(10), review(10)], 3)).toBe(100);
-    expect(achievementPercent([{ reps: 0, state: 0 }], 1)).toBe(0);
+    expect(retentionPercent([review(10), review(10), review(10)], 3)).toBe(100);
+    expect(retentionPercent([{ reps: 0, state: 0 }], 1)).toBe(0);
   });
 
   it("定着したカードのフェーズ合計 ÷ (枚数 × 10) で計算する", () => {
-    expect(achievementPercent([review(5), review(5)], 2)).toBe(50);
-    expect(achievementPercent([review(1)], 2)).toBe(5);
-    expect(achievementPercent([review(10), learning(0)], 4)).toBe(25);
+    expect(retentionPercent([review(5), review(5)], 2)).toBe(50);
+    expect(retentionPercent([review(1)], 2)).toBe(5);
+    expect(retentionPercent([review(10), learning(0)], 4)).toBe(25);
   });
 
   it("定着していないカードは、フェーズが進んでいても数えない", () => {
     // 「もう一度」を10回続けた状態（reps=10 だが state は Learning のまま）
-    expect(achievementPercent([learning(10), learning(10)], 2)).toBe(0);
-    expect(achievementPercent([review(10), learning(10)], 2)).toBe(50);
+    expect(retentionPercent([learning(10), learning(10)], 2)).toBe(0);
+    expect(retentionPercent([review(10), learning(10)], 2)).toBe(50);
   });
 
   it("フェーズ10を超えても満点扱いにし、100%を超えない", () => {
-    expect(achievementPercent([review(30), review(30)], 2)).toBe(100);
-    expect(achievementPercent([review(20), learning(0)], 2)).toBe(50);
+    expect(retentionPercent([review(30), review(30)], 2)).toBe(100);
+    expect(retentionPercent([review(20), learning(0)], 2)).toBe(50);
   });
 
   it("カードが0枚なら0%（0除算しない）", () => {
-    expect(achievementPercent([], 0)).toBe(0);
+    expect(retentionPercent([], 0)).toBe(0);
   });
 
   it("負のフェーズは0として扱う", () => {
-    expect(achievementPercent([review(-5), review(10)], 2)).toBe(50);
+    expect(retentionPercent([review(-5), review(10)], 2)).toBe(50);
   });
 });

@@ -16,7 +16,7 @@ export interface DeckListItem {
   cardCount: number;
   /** 今日学習できる枚数（復習＋新規） */
   todo: number;
-  learnedPercent: number;
+  retentionPercent: number;
   /** この端末で最後に学習した時刻。未学習なら null */
   lastStudiedAt: number | null;
 }
@@ -39,7 +39,7 @@ export function sortDecks<T extends DeckListItem>(items: T[], sort: DeckSort): T
       // 同数なら名前順。今日やることが無いデッキは自然と下へ落ちる
       return sorted.sort((left, right) => right.todo - left.todo || byName(left, right));
     case "learned":
-      return sorted.sort((left, right) => right.learnedPercent - left.learnedPercent || byName(left, right));
+      return sorted.sort((left, right) => right.retentionPercent - left.retentionPercent || byName(left, right));
     case "recent":
     default:
       // 未学習（null）は末尾へまとめ、その中では名前順にする

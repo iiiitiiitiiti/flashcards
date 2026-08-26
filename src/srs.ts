@@ -146,11 +146,14 @@ export const PHASE_FULL = 10;
 export const FSRS_STATE_REVIEW = 2;
 
 /**
- * デッキ全体の達成率（%）。**定着（state=Review）したカードのフェーズ合計 ÷ (枚数 × 10)**。
+ * デッキ全体の定着率（%）。**定着（state=Review）したカードのフェーズ合計 ÷ (枚数 × 10)**。
  * 満点は「フェーズ10かつ定着」。reps は「もう一度」でも増えるため、定着していないカードは
- * 数えない（何度も忘れているカードで達成率が上がってしまうのを防ぐ）。
+ * 数えない（何度も忘れているカードで定着率が上がってしまうのを防ぐ）。
+ *
+ * 「今どれだけ身についているか」を表す値であり、積み上げた総量ではない。
+ * 忘れて Relearning へ落ちたカードは 0 に戻るので、値は下がることがある。
  */
-export function achievementPercent(cards: { reps: number; state: number }[], cardCount: number): number {
+export function retentionPercent(cards: { reps: number; state: number }[], cardCount: number): number {
   if (cardCount <= 0) return 0;
   const sum = cards.reduce((total, card) => {
     if (card.state !== FSRS_STATE_REVIEW) return total;
@@ -215,4 +218,9 @@ export function buildStudyQueue(
     fresh,
     freshHeldBack: freshTotal - fresh.length,
   };
+}
+
+/** 定着率の表示。小さい値でも進みが見えるように、10%未満は小数第1位まで出す */
+export function formatPercent(value: number): string {
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
 }

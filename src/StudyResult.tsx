@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { formatPercent } from "./srs";
 import type { ReviewRating, StudyMode } from "./types";
 
 /** このセッションで評価した1枚ぶんの記録 */
@@ -18,7 +19,7 @@ export interface SessionEntry {
 interface StudyResultProps {
   mode: StudyMode;
   entries: SessionEntry[];
-  /** デッキ全体の達成率（フェーズ合計 ÷ 満点） */
+  /** デッキ全体の定着率（定着したカードのフェーズ合計 ÷ 満点） */
   percent: number;
   /** このセッションで進んだフェーズの合計 */
   phaseGain: number;
@@ -52,7 +53,7 @@ const RATING_CLASSES: Record<ReviewRating, string> = {
 };
 
 /**
- * 達成率に応じた一言。デッキ全体の進み具合を見た文言にする
+ * 定着率に応じた一言。デッキ全体の進み具合を見た文言にする
  * （セッション単体の出来ではないので「今回よくできた」とは書かない）
  */
 function comment(percent: number, phaseGain: number): string[] {
@@ -86,18 +87,13 @@ function useCountUp(target: number, durationMs = 900): number {
   return value;
 }
 
-/** 小さい値でも進みが見えるように、10%未満は小数第1位まで出す */
-function formatPercent(value: number): string {
-  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
-}
-
 /** 半円ゲージ。0〜100% を左から右へ塗る。表示時に 0 から目標値まで動く */
 function Gauge({ percent }: { percent: number }) {
   const radius = 90;
   const length = Math.PI * radius;
   const shown = useCountUp(percent);
   return (
-    <div className="gauge" role="img" aria-label={`達成率 ${formatPercent(percent)}%`}>
+    <div className="gauge" role="img" aria-label={`定着率 ${formatPercent(percent)}%`}>
       <svg viewBox="0 0 220 130" className="gauge-svg" aria-hidden="true">
         <defs>
           <linearGradient id="gauge-stroke" x1="0" y1="0" x2="1" y2="0">
@@ -122,7 +118,7 @@ function Gauge({ percent }: { percent: number }) {
         />
       </svg>
       <div className="gauge-value">
-        <span className="gauge-caption">達成率</span>
+        <span className="gauge-caption">定着率</span>
         <strong>{formatPercent(shown)}%</strong>
       </div>
     </div>

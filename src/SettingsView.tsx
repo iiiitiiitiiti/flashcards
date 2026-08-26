@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { exportBackup, importBackup } from "./backup";
 import { deleteProgressByKeys, readAllProgress } from "./db";
+import { estimateStorage, formatBytes, isQuotaExceeded, type StorageUsage } from "./quota";
 import { testConnection } from "./github";
 import {
   BUZZER_SPEEDS,
@@ -38,7 +39,7 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   const [persistToken, setPersistToken] = useState(tokenPersistence() !== "session");
   const [tokenMessage, setTokenMessage] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
-  const [storagePersisted, setStoragePersisted] = useState<boolean | null>(null);
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [lastBackupAt, setLastBackupAt] = useState(loadLastBackupAt());
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [orphanMessage, setOrphanMessage] = useState<string | null>(null);
@@ -77,7 +78,7 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   }
 
   useEffect(() => {
-    void navigator.storage?.persisted?.().then(setStoragePersisted).catch(() => setStoragePersisted(null));
+    void estimateStorage().then(setUsage);
   }, []);
 
   function handleSaveToken() {
@@ -108,18 +109,18 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
   async function handleExport() {
     setBackupMessage(null);
     try {
-      const backup = await exportBackup();
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+      const { blob, exportedAt, progressCount, logCount } = await exportBackup();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
-      const stamp = new Date(backup.exportedAt).toISOString().slice(0, 10);
+      const stamp = new Date(exportedAt).toISOString().slice(0, 10);
       anchor.href = url;
       anchor.download = `flashcards-backup-${stamp}.json`;
       anchor.click();
-      URL.revokeObjectURL(url);
-      saveLastBackupAt(backup.exportedAt);
-      setLastBackupAt(backup.exportedAt);
-      setBackupMessage(`進捗 ${backup.cardProgress.length} 件・ログ ${backup.reviewLog.length} 件を書き出しました。`);
+      // click 直後に revoke すると、保存が始まる前に無効になる端末がある
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      saveLastBackupAt(exportedAt);
+      setLastBackupAt(exportedAt);
+      setBackupMessage(`進捗 ${progressCount} 件・ログ ${logCount} 件（${formatBytes(blob.size)}）を書き出しました。`);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "エクスポートに失敗しました。");
     }
@@ -132,7 +133,12 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
       const result = await importBackup(parsed);
       setBackupMessage(`インポート完了: 進捗 ${result.progressImported} 件更新・${result.progressSkipped} 件スキップ・ログ ${result.logsImported} 件追加。`);
     } catch (error) {
-      setBackupMessage(`インポート失敗（何も変更していません）: ${error instanceof Error ? error.message : "不明なエラー"}`);
+      const reason = isQuotaExceeded(error)
+        ? "端末の保存容量が足りません。空きを増やしてからお試しください"
+        : error instanceof Error
+          ? error.message
+          : "不明なエラー";
+      setBackupMessage(`インポート失敗（何も変更していません）: ${reason}`);
     }
   }
 
@@ -238,10 +244,17 @@ export function SettingsView({ snapshot, onClose }: SettingsViewProps) {
 
       <h2>学習進捗のバックアップ</h2>
       <p className="muted">
-        進捗はこの端末にのみ保存されます（ストレージ永続化: {storagePersisted === null ? "不明" : storagePersisted ? "有効" : "無効"}）。
+        進捗はこの端末にのみ保存されます（ストレージ永続化: {usage === null ? "不明" : usage.persisted ? "有効" : "無効"}）。
         端末やブラウザのデータ削除に備えて、定期的に書き出してください。
         最終バックアップ: {lastBackupAt !== null ? formatTimestamp(lastBackupAt) : "未実施"}
       </p>
+      {usage !== null && (
+        <p className="muted">
+          保存容量: {formatBytes(usage.usedBytes)}
+          {usage.quotaBytes > 0 && ` / ${formatBytes(usage.quotaBytes)}`}
+          （デッキのキャッシュと学習進捗の合計）
+        </p>
+      )}
       <div className="settings-group">
         <div className="button-row">
           <button type="button" onClick={() => void handleExport()}>JSONを書き出す</button>
