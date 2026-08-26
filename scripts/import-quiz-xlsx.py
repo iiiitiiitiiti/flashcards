@@ -84,11 +84,11 @@ def main() -> int:
     next(rows)  # ヘッダー
 
     decks: dict[str, dict] = {}
-    seen_ids: dict[str, set[str]] = {}
+    seen_ids: dict[str, dict[str, int]] = {}
     skipped_empty = 0
-    duplicated = 0
+    duplicates: list[str] = []
 
-    for row in rows:
+    for row_number, row in enumerate(rows, start=2):
         question, answer = text(row[COL_QUESTION]), text(row[COL_ANSWER])
         if not question or not answer:
             skipped_empty += 1
@@ -100,16 +100,19 @@ def main() -> int:
             deck_id,
             {"schemaVersion": 1, "id": deck_id, "name": deck_name, "description": "", "cards": []},
         )
-        ids = seen_ids.setdefault(deck_id, set())
+        ids = seen_ids.setdefault(deck_id, {})
 
         identifier = card_id(row[COL_SERIAL], question)
         if not ID_PATTERN.match(identifier):
             raise SystemExit(f"id が規約に合いません: {identifier!r}")
         if identifier in ids:
-            # 同じ id は先勝ち（進捗が二重に付かないようにする）
-            duplicated += 1
+            # 黙って捨てると、どちらの問題の進捗なのか分からなくなる。必ず人が直す
+            duplicates.append(
+                f"  id {identifier}: {row_number} 行目と {ids[identifier]} 行目\n"
+                f"    今の行: {question[:40]}"
+            )
             continue
-        ids.add(identifier)
+        ids[identifier] = row_number
 
         card = {"id": identifier, "front": question, "back": answer}
         note = text(row[COL_NOTE])
@@ -124,6 +127,12 @@ def main() -> int:
             card["tags"] = tags
         deck["cards"].append(card)
 
+    if duplicates:
+        raise SystemExit(
+            "同じカード id が複数の行に現れました。Q列「No」を直してから再実行してください。\n"
+            "（id が重複したままだと、学習進捗が別の問題に紐づきます）\n" + "\n".join(duplicates)
+        )
+
     total = 0
     for deck_id, deck in sorted(decks.items()):
         deck["description"] = f"クイズ.xlsx「{SHEET}」より {len(deck['cards'])} 問"
@@ -133,7 +142,7 @@ def main() -> int:
         total += len(deck["cards"])
         print(f"{path.name:24} {len(deck['cards']):6} 問  {size:8.0f} KB")
 
-    print(f"\n合計 {total} 問 / {len(decks)} デッキ（空行スキップ {skipped_empty}・id 重複スキップ {duplicated}）")
+    print(f"\n合計 {total} 問 / {len(decks)} デッキ（空行スキップ {skipped_empty}）")
     return 0
 
 
