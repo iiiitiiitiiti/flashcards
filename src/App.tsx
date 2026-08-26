@@ -323,7 +323,7 @@ export function App() {
               <span className="sheet-label">出題順</span>
               <div className="segmented">
                 <button type="button" aria-pressed={startOrder === "sequential"} onClick={() => setStartOrder("sequential")}>
-                  デフォルト
+                  順番どおり
                 </button>
                 <button type="button" aria-pressed={startOrder === "random"} onClick={() => setStartOrder("random")}>
                   ランダム
