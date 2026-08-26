@@ -12,7 +12,7 @@ function toSnapshot(entries: DeckCacheEntry[], warnings: string[], offline: bool
 /**
  * デッキスナップショットを更新する。
  * - コミット SHA を1つに固定して全デッキを取得し、全件検証後に一括でキャッシュへ公開する
- * - キャッシュ済みで同じコミットのデッキは再取得しない
+ * - キャッシュ済みで blob SHA が同じデッキは再取得しない（中身が変わったものだけ取る）
  * - ネットワーク不通・一覧取得失敗時は既存キャッシュを返す（offline: true）
  * - 個別デッキが不正だった場合はそのデッキだけ旧キャッシュを残し、警告を付ける
  */
@@ -35,11 +35,12 @@ export async function refreshSnapshot(token: string | null): Promise<DeckSnapsho
   let results: PromiseSettledResult<DeckCacheEntry>[];
   try {
     results = await Promise.allSettled(
-      listing.deckIds.map(async (deckId): Promise<DeckCacheEntry> => {
-        // 同じコミットのデッキは中身が変わらないので取得しない（数MBのデッキで効く）
+      listing.decks.map(async ({ deckId, blobSha }): Promise<DeckCacheEntry> => {
+        // 中身が変わっていないデッキは取得しない（数MBのデッキで効く）。
+        // blobSha を持たない旧キャッシュは一度だけ取り直す
         const known = cachedById.get(deckId);
-        if (known && known.commitSha === listing.commitSha) {
-          return { ...known, fetchedAt };
+        if (known?.blobSha !== undefined && known.blobSha === blobSha) {
+          return { ...known, commitSha: listing.commitSha, fetchedAt };
         }
         const raw = await fetchDeckRaw(listing.commitSha, deckId);
         let parsed: unknown;
@@ -54,7 +55,7 @@ export async function refreshSnapshot(token: string | null): Promise<DeckSnapsho
         } catch (error) {
           throw new DeckInvalidError(deckId, error instanceof Error ? error.message : "不明なエラー");
         }
-        return { deckId, deck, commitSha: listing.commitSha, fetchedAt };
+        return { deckId, deck, commitSha: listing.commitSha, blobSha, fetchedAt };
       }),
     );
   } catch {
@@ -62,7 +63,7 @@ export async function refreshSnapshot(token: string | null): Promise<DeckSnapsho
   }
 
   for (const [index, result] of results.entries()) {
-    const deckId = listing.deckIds[index];
+    const deckId = listing.decks[index].deckId;
     if (result.status === "fulfilled") {
       entries.push(result.value);
       continue;
