@@ -5,6 +5,7 @@ import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { buildStudyQueue } from "./srs";
 import {
   loadMotionPreference,
+  loadNewCardsPerDay,
   loadSessionSize,
   loadStudyMode,
   loadToken,
@@ -66,7 +67,7 @@ export function App() {
     const next = new Map<string, DeckStats>();
     for (const entry of target.decks) {
       const records = await readProgress(entry.deckId);
-      const queue = buildStudyQueue(entry.deck, records, now);
+      const queue = buildStudyQueue(entry.deck, records, now, loadNewCardsPerDay());
       const cardIds = new Set(entry.deck.cards.map((card) => card.id));
       const learned = records.filter((record) => cardIds.has(record.cardId) && record.progress.state === FSRS_STATE_REVIEW).length;
       next.set(entry.deckId, {

@@ -12,6 +12,7 @@ function toSnapshot(entries: DeckCacheEntry[], warnings: string[], offline: bool
 /**
  * デッキスナップショットを更新する。
  * - コミット SHA を1つに固定して全デッキを取得し、全件検証後に一括でキャッシュへ公開する
+ * - キャッシュ済みで同じコミットのデッキは再取得しない
  * - ネットワーク不通・一覧取得失敗時は既存キャッシュを返す（offline: true）
  * - 個別デッキが不正だった場合はそのデッキだけ旧キャッシュを残し、警告を付ける
  */
@@ -35,6 +36,11 @@ export async function refreshSnapshot(token: string | null): Promise<DeckSnapsho
   try {
     results = await Promise.allSettled(
       listing.deckIds.map(async (deckId): Promise<DeckCacheEntry> => {
+        // 同じコミットのデッキは中身が変わらないので取得しない（数MBのデッキで効く）
+        const known = cachedById.get(deckId);
+        if (known && known.commitSha === listing.commitSha) {
+          return { ...known, fetchedAt };
+        }
         const raw = await fetchDeckRaw(listing.commitSha, deckId);
         let parsed: unknown;
         try {
