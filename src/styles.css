@@ -169,6 +169,24 @@ button:disabled {
   cursor: default;
 }
 
+/*
+ * タップすると OS 既定の黒いハイライトが一瞬かぶるので、それを消して
+ * 「軽く沈む」押下表現へ置き換える（2026-08-27 ユーザー指定）。
+ * iOS では :hover を付けるとタップ後に状態が居座るため、押した見た目は :active で作る。
+ */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.96);
+  opacity: 0.72;
+}
+
 button.primary {
   background: var(--color-primary);
   color: var(--color-on-primary);
@@ -934,6 +952,15 @@ textarea {
  */
 :root[data-motion="crossfade"] .progress-fill {
   transition: none;
+}
+
+/* 押下表現も沈めず、薄くなるだけにする */
+:root[data-motion="crossfade"] button {
+  transition: opacity 0.12s ease;
+}
+
+:root[data-motion="crossfade"] button:active:not(:disabled) {
+  transform: none;
 }
 
 :root[data-motion="crossfade"] .flip-scene {
