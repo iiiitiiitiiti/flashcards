@@ -182,6 +182,17 @@ button {
   transition: transform 0.12s ease, opacity 0.12s ease;
 }
 
+/*
+ * 押すものは長押しで選択・虫めがねを出さない。iOS はボタンの文字も選択対象にするので、
+ * 早押しで押し込んだときに選択ハイライトが出てしまう
+ */
+button,
+summary {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 /* data-pressed は main.tsx が付ける。iOS Safari はタップで :active を当てないため */
 button:active:not(:disabled),
 button[data-pressed]:not(:disabled) {
@@ -588,6 +599,16 @@ body.study-lock {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/*
+ * 早押しはフッターの高さを予約する。「押す」の丸ボタン（120px）と、押したあとの帯ボタンで
+ * 高さが 168px ⇄ 96px と変わり、**押した瞬間にカードが 72px 伸びて問題文が組み直される**ため。
+ * 下寄せにして、ボタンの位置（親指の届く高さ）は変えない。
+ */
+.study-buzzer .study-actions {
+  min-height: 168px;
+  justify-content: flex-end;
 }
 
 /* 自分で書いたメモ。出典側の補足（.study-note）とは見た目を分ける */

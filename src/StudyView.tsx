@@ -643,7 +643,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
 
   if (mode === "buzzer") {
     return (
-      <section className="study">
+      <section className="study study-buzzer">
         {dialogs}
         {header}
         {cardActions}
