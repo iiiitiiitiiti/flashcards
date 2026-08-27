@@ -54,6 +54,7 @@ function reveal(container: HTMLElement) {
 
 const undoButton = () => screen.getByLabelText("1つ前のカードに戻る（直前の評価を取り消す）") as HTMLButtonElement;
 const remainingText = () => document.querySelector(".study-remaining")?.textContent ?? "";
+// 早押しボタンには文字を置いていない（実物と同じ）。読み上げ用の名前で引く
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
@@ -136,7 +137,7 @@ describe("直前の評価を取り消す", () => {
   it("「もう一度」で末尾へ足した再出題も取り除く（枚数がずれない）", async () => {
     // rating=1 を明示ボタンで出せるのは早押しの「不正解」だけ（通常学習は2択＋スワイプのため）
     const { container } = renderStudy({ mode: "buzzer" });
-    fireEvent.click(screen.getByText("押す"));
+    fireEvent.click(screen.getByLabelText("押す"));
     fireEvent.click(screen.getByText("答えを表示"));
     expect(remainingText()).toContain("残り 3 枚");
 
@@ -145,7 +146,7 @@ describe("直前の評価を取り消す", () => {
     // 末尾へ再出題が足されるので、1枚めくっても残りは3枚のまま
     // （早押しの問題文は1文字ずつしか出ないので、次のカードへ進んだことは「押す」の復活で見る）
     await waitFor(async () => expect(await readAllProgress()).toHaveLength(1));
-    await waitFor(() => expect(screen.getByText("押す")).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText("押す")).toBeTruthy());
     expect(remainingText()).toContain("残り 3 枚");
 
     fireEvent.click(undoButton());
@@ -195,7 +196,7 @@ describe("直前の評価を取り消す", () => {
 describe("早押し", () => {
   it("押すと文字送りが止まり、そこまでの文字数が記録される", async () => {
     renderStudy({ mode: "buzzer" });
-    fireEvent.click(screen.getByText("押す"));
+    fireEvent.click(screen.getByLabelText("押す"));
     expect(remainingText()).toContain("0/6 文字で押した");
     // 押したあとは「答えを表示」に切り替わる
     expect(screen.getByText("答えを表示")).toBeTruthy();
@@ -203,13 +204,13 @@ describe("早押し", () => {
 
   it("読み切る前に押せば「つづきを読む」が出る", () => {
     renderStudy({ mode: "buzzer" });
-    fireEvent.click(screen.getByText("押す"));
+    fireEvent.click(screen.getByLabelText("押す"));
     expect(screen.getByText("つづきを読む")).toBeTruthy();
   });
 
   it("正解・不正解の2択で評価する", async () => {
     renderStudy({ mode: "buzzer" });
-    fireEvent.click(screen.getByText("押す"));
+    fireEvent.click(screen.getByLabelText("押す"));
     fireEvent.click(screen.getByText("答えを表示"));
     const ratings = within(document.querySelector(".rating-buttons") as HTMLElement);
     expect(ratings.getByText("正解")).toBeTruthy();
