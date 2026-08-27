@@ -52,9 +52,16 @@ preview（:4173）＋ Playwright 390×844、SW を unregister してから測定
 - 押下中 `matrix(0.96, 0, 0, 0.96, 0, 0)` / `opacity 0.72` → 離すと `none` / `1`
 - 無効ボタン（統計の「次の月」）は押下中も `transform: none`、`opacity` は 0.5 のまま
 - `data-motion="crossfade"` では押下中も `transform: none`、`opacity` は 0.72
+- **合成 `PointerEvent` で `pointerdown` を送ると（`:active` は立たないので iOS の状況の代役になる）、`data-pressed` だけで `matrix(0.96, …)` / `opacity 0.72` になる**
+- 子の `svg` を押しても親のボタンが沈み、その `svg` への `pointerout` では解除されない
+- 無効ボタンには `data-pressed` が付かない。操作後に取り残しは 0 件
 - page error は 0 件（CSP の `frame-ancestors` 警告のみで、変更前から出ている）
 
-判断が間違いだったとわかる条件: 実機で押下が分かりにくい、または縮小が他の transform と衝突して表示が崩れる。
+**iPhone 実機で確認済み**（2026-08-27、ユーザー実施）。押下のアニメーションが出ることを確認した。
+Playwright は Chromium なので、iOS の `:active` 挙動そのものは harness 側では再現できない。
+**この種の確認は今後も実機へ回す**（デスクトップのマウス操作で「確認済み」と書くと、主端末で壊れているものを通す）。
+
+判断が間違いだったとわかる条件: 実機で押下が分かりにくい、押しっぱなしに見える、または縮小が他の transform と衝突して表示が崩れる。
 
 ### 関連ファイル
 
