@@ -66,6 +66,13 @@ function HideIcon() {
 /** 1枚に費やした時間として数える上限（これを超える分は放置とみなす） */
 const MAX_ELAPSED_MS = 5 * 60 * 1000;
 
+/**
+ * 早押しで、カードが出てから最初の1文字が出るまでの間。
+ * 1文字ぶんの間隔（既定 120ms）だと、カードの入場アニメーション（`.flip-scene` の 0.28s）が
+ * 終わる前に読み始めてしまい、構える時間が無い。
+ */
+const BUZZER_LEAD_IN_MS = 800;
+
 interface QueueItem {
   card: DeckCard;
   isNew: boolean;
@@ -196,7 +203,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     // リザルトを表示している間は読み上げを止める（裏で問題が進んでしまわないように）
     if (mode !== "buzzer" || !current || revealed || buzzedAt !== null || result !== null) return;
     if (shownChars >= buzzerChars.length) return;
-    const timer = window.setTimeout(() => setShownChars((count) => count + 1), buzzerSpeed);
+    // 1文字目だけ待ちを長くする（読み始めるまでの構える間）
+    const delay = shownChars === 0 ? BUZZER_LEAD_IN_MS : buzzerSpeed;
+    const timer = window.setTimeout(() => setShownChars((count) => count + 1), delay);
     return () => window.clearTimeout(timer);
   }, [mode, current, revealed, buzzedAt, result, shownChars, buzzerChars.length, buzzerSpeed]);
 
