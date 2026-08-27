@@ -1125,6 +1125,32 @@ textarea {
   animation: none;
 }
 
+/* 取得中の更新アイコン。無効化で薄くなるので、回転だけで進行を見せる */
+.icon-spin {
+  animation: icon-spin 1.1s linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 動きを減らす設定では回さず、明滅で進行を見せる */
+:root[data-motion="crossfade"] .icon-spin {
+  animation: icon-spin-fade 1.1s ease-in-out infinite;
+}
+
+@keyframes icon-spin-fade {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 @keyframes buzzer-blink {
   to {
     visibility: hidden;

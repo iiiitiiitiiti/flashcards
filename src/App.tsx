@@ -104,6 +104,29 @@ function formatTimestamp(value: number): string {
   return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/** 更新のアイコン（円を描く2本の矢印）。取得中はゆっくり回す */
+function RefreshIcon({ spinning }: { spinning: boolean }) {
+  return (
+    <svg
+      className={spinning ? "icon-spin" : undefined}
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 11a8 8 0 0 0-13.7-5.3L4 8" />
+      <path d="M4 4v4h4" />
+      <path d="M4 13a8 8 0 0 0 13.7 5.3L20 16" />
+      <path d="M20 20v-4h-4" />
+    </svg>
+  );
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<DeckSnapshot | null>(null);
   const [stats, setStats] = useState<Map<string, DeckStats>>(new Map());
@@ -415,8 +438,15 @@ export function App() {
       <header className="app-header">
         <h1>暗記カード</h1>
         <div className="button-row">
-          <button type="button" onClick={() => void refresh()} disabled={refreshing}>
-            {refreshing ? "更新中…" : "更新"}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={refreshing ? "デッキ一覧を更新中" : "デッキ一覧を更新"}
+            aria-busy={refreshing}
+            onClick={() => void refresh()}
+            disabled={refreshing}
+          >
+            <RefreshIcon spinning={refreshing} />
           </button>
         </div>
       </header>
