@@ -230,3 +230,39 @@ export async function readAllReviewLog(): Promise<ReviewLogEntry[]> {
   const db = await getDb();
   return db.getAll("reviewLog");
 }
+
+/**
+ * 直前の評価を取り消す。進捗を評価前の状態へ戻し、その評価のログを消す。
+ * `previous` が無いカード（その評価が初回だった）は進捗ごと削除する。
+ * 進捗とログがちぐはぐにならないよう、同一トランザクションで行う。
+ */
+export async function undoReview(
+  deckId: string,
+  cardId: string,
+  previous: ProgressRecord | undefined,
+  reviewId: string,
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction(["cardProgress", "reviewLog"], "readwrite");
+  const requests: Promise<unknown>[] = [];
+  try {
+    // 2つの要求を await を挟まずに出す。間で待つと、片方だけ済んだところで
+    // トランザクションが確定してしまい、進捗だけ戻ってログが残る
+    const progress = tx.objectStore("cardProgress");
+    requests.push(previous ? progress.put(previous) : progress.delete([deckId, cardId]));
+    requests.push(tx.objectStore("reviewLog").delete(reviewId));
+    await Promise.all(requests);
+    await tx.done;
+  } catch (error) {
+    // 片方だけ適用された状態を残さない
+    try {
+      tx.abort();
+    } catch {
+      // すでに中断・確定済みなら何もしない
+    }
+    // 中断で残りの要求が AbortError になっても、未処理の rejection にしない
+    for (const request of requests) void request.catch(() => undefined);
+    await tx.done.catch(() => undefined);
+    throw error;
+  }
+}
