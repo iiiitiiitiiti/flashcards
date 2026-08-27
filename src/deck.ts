@@ -17,6 +17,11 @@ export interface Deck {
 // deck.id / card.id に許す文字。ファイル名・進捗キーにそのまま使うため制限する
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
+/** id として使える文字列か。デッキ追加の入力チェックで使う */
+export function isValidId(value: string): boolean {
+  return ID_PATTERN.test(value);
+}
+
 export function validateDeck(value: unknown, expectedId?: string): Deck {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("デッキがオブジェクトではありません");

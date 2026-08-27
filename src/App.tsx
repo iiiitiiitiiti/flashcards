@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { pruneReviewLog, readAllHiddenCards, readAllProgress, readCardNotes, readProgress, upsertDeckCacheEntry } from "./db";
 import { requestPersistentStorage } from "./quota";
-import type { Deck } from "./deck";
+import { isValidId, type Deck } from "./deck";
+import { createDeck } from "./github";
+import { ModalSheet } from "./ModalSheet";
 import { DeckDetailView } from "./DeckDetailView";
 import { StatsView } from "./StatsView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
@@ -127,6 +129,32 @@ function RefreshIcon({ spinning }: { spinning: boolean }) {
   );
 }
 
+/** デッキ追加のアイコン。更新アイコンと線の太さ・端の丸めを揃える */
+function PlusIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+/** デッキ追加シートの入力内容 */
+interface NewDeckForm {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<DeckSnapshot | null>(null);
   const [stats, setStats] = useState<Map<string, DeckStats>>(new Map());
@@ -148,6 +176,13 @@ export function App() {
   const [usedNewCardsToday, setUsedNewCardsToday] = useState<number | undefined>(undefined);
   /** 出題から外したカード（デッキ id → カード id）。学習にも統計にも出さない */
   const [hidden, setHidden] = useState<Map<string, Set<string>>>(new Map());
+  /** デッキ追加シート。null なら閉じている */
+  const [newDeck, setNewDeck] = useState<NewDeckForm | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createMessage, setCreateMessage] = useState<string | null>(null);
+
+  // トークンを登録している間だけデッキの追加・削除ができる（設定画面から戻ると再評価される）
+  const canEdit = loadToken() !== "";
 
   const refreshHidden = useCallback(async () => {
     const rows = await readAllHiddenCards();
@@ -281,6 +316,52 @@ export function App() {
   }
 
   /**
+   * カードが 0 枚のデッキを GitHub に作る。手元で重複を弾き、すり抜けても
+   * `createDeck` が sha なし PUT の 422 で止める。
+   */
+  async function handleCreateDeck() {
+    if (!newDeck || creating) return;
+    const id = newDeck.id.trim();
+    const name = newDeck.name.trim();
+    const description = newDeck.description.trim();
+    if (!isValidId(id)) {
+      setCreateMessage("id は半角英数字で始め、英数字・ハイフン・アンダースコアだけで書いてください。");
+      return;
+    }
+    if (name === "") {
+      setCreateMessage("デッキ名は必須です。");
+      return;
+    }
+    if (snapshot?.decks.some((candidate) => candidate.deckId === id)) {
+      setCreateMessage(`id「${id}」のデッキは既にあります。`);
+      return;
+    }
+    setCreating(true);
+    setCreateMessage(null);
+    try {
+      const created = await createDeck(loadToken(), {
+        schemaVersion: 1,
+        id,
+        name,
+        ...(description !== "" ? { description } : {}),
+        cards: [],
+      });
+      // blobSha は分からないので入れない（次の更新で必ず取り直される）
+      const entry: DeckCacheEntry = { deckId: id, deck: created, commitSha: "", fetchedAt: Date.now() };
+      // キャッシュに入らなくても GitHub 側には作れているので、失敗しても続行する
+      await upsertDeckCacheEntry(entry).catch(() => undefined);
+      setNewDeck(null);
+      if (snapshot) await applySnapshot({ ...snapshot, decks: [...snapshot.decks, entry] });
+      // 作った直後はカードが 0 枚なので、そのままカード一覧へ送る
+      setView({ type: "deck", deckId: id });
+    } catch (error) {
+      setCreateMessage(error instanceof Error ? error.message : "デッキを作成できませんでした。");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  /**
    * セッションを組むのに要る進捗を読む。
    * 「全デッキ合計」のときは、今日すでに使った新規枠もそのとき数え直す
    * （ホームへ戻らずに「つづける」で再開する経路があるため、stats の値は当てにできない）
@@ -397,6 +478,16 @@ export function App() {
               void upsertDeckCacheEntry({ ...entry, deck: nextDeck, fetchedAt: Date.now() });
               void applySnapshot(updated);
             }}
+            onDeckDeleted={() => {
+              // まず手元から外してホームへ戻り、そのうえで GitHub の現状で組み直す。
+              // 削除前に始まっていた更新が後から着地してキャッシュを復活させても、これで上書きされる
+              void applySnapshot({
+                ...snapshot,
+                decks: snapshot.decks.filter((candidate) => candidate.deckId !== entry.deckId),
+              });
+              setView({ type: "home" });
+              void refresh();
+            }}
           />
         </main>
       );
@@ -450,6 +541,19 @@ export function App() {
       <header className="app-header">
         <h1>暗記カード</h1>
         <div className="button-row">
+          {canEdit && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="デッキを追加"
+              onClick={() => {
+                setCreateMessage(null);
+                setNewDeck({ id: "", name: "", description: "" });
+              }}
+            >
+              <PlusIcon />
+            </button>
+          )}
           <button
             type="button"
             className="icon-button"
@@ -603,6 +707,48 @@ export function App() {
             </div>
           </div>
         </div>
+      )}
+      {newDeck !== null && (
+        <ModalSheet label="デッキを追加" onCancel={() => (creating ? undefined : setNewDeck(null))}>
+          <h2>デッキを追加</h2>
+          <label>
+            デッキ名
+            <input
+              type="text"
+              value={newDeck.name}
+              autoFocus
+              onChange={(event) => setNewDeck({ ...newDeck, name: event.target.value })}
+            />
+          </label>
+          <label>
+            id（ファイル名になります。あとから変えられません）
+            <input
+              type="text"
+              value={newDeck.id}
+              placeholder="my-deck"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(event) => setNewDeck({ ...newDeck, id: event.target.value })}
+            />
+          </label>
+          <label>
+            説明（任意）
+            <input
+              type="text"
+              value={newDeck.description}
+              onChange={(event) => setNewDeck({ ...newDeck, description: event.target.value })}
+            />
+          </label>
+          <p className="muted">id には半角の英数字・ハイフン・アンダースコアが使えます。カードは作成後に追加します。</p>
+          {createMessage && <p className="notice warning">{createMessage}</p>}
+          <div className="sheet-actions">
+            <button type="button" className="primary" disabled={creating} onClick={() => void handleCreateDeck()}>
+              {creating ? "作成中…" : "GitHubへ作成"}
+            </button>
+            <button type="button" disabled={creating} onClick={() => setNewDeck(null)}>キャンセル</button>
+          </div>
+        </ModalSheet>
       )}
       {bottomNav}
     </main>

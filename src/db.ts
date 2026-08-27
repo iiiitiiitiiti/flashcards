@@ -287,3 +287,43 @@ export async function undoReview(
     add(tx.objectStore("reviewLog").delete(reviewId));
   });
 }
+
+/**
+ * デッキに紐づく端末側のデータを全部消す（GitHub の削除が成功したあとの後片付け）。
+ *
+ * `reviewLog` だけ `byDeck` インデックスが無いので、**先に読み取り専用で鍵を集めてから**、
+ * 読み書きトランザクションで一括削除する。`runAtomically` は「要求を同期的に出し切る」
+ * 契約なので、`await` を挟むカーソル走査とは噛み合わないため（`docs/decisions/006` 参照）。
+ *
+ * 何度呼んでも同じ結果になる（消えていれば何もしない）ので、失敗したら再試行してよい。
+ */
+export async function deleteDeckLocalData(deckId: string): Promise<{ progress: number; notes: number; hidden: number; reviews: number }> {
+  const db = await getDb();
+
+  const readTx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog"]);
+  const progressKeys = await readTx.objectStore("cardProgress").index("byDeck").getAllKeys(deckId);
+  const noteKeys = await readTx.objectStore("cardNotes").index("byDeck").getAllKeys(deckId);
+  const hiddenKeys = await readTx.objectStore("hiddenCards").index("byDeck").getAllKeys(deckId);
+  const reviewIds: string[] = [];
+  let cursor = await readTx.objectStore("reviewLog").openCursor();
+  while (cursor) {
+    if (cursor.value.deckId === deckId) reviewIds.push(cursor.value.reviewId);
+    cursor = await cursor.continue();
+  }
+  await readTx.done;
+
+  const tx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog", "deckCache"], "readwrite");
+  await runAtomically(tx, (add) => {
+    const progress = tx.objectStore("cardProgress");
+    for (const key of progressKeys) add(progress.delete(key));
+    const notes = tx.objectStore("cardNotes");
+    for (const key of noteKeys) add(notes.delete(key));
+    const hidden = tx.objectStore("hiddenCards");
+    for (const key of hiddenKeys) add(hidden.delete(key));
+    const log = tx.objectStore("reviewLog");
+    for (const reviewId of reviewIds) add(log.delete(reviewId));
+    add(tx.objectStore("deckCache").delete(deckId));
+  });
+
+  return { progress: progressKeys.length, notes: noteKeys.length, hidden: hiddenKeys.length, reviews: reviewIds.length };
+}

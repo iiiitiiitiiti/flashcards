@@ -208,6 +208,75 @@ async function writeDeckWithRetry(deckId: string, token: string, message: string
   throw new Error("他の更新と競合し続けたため保存を中止しました。時間をおいて再試行してください。");
 }
 
+/** 書き込み用のパス。デッキ id はそのままファイル名になる */
+function deckContentsPath(deckId: string): string {
+  return `/repos/${OWNER}/${REPOSITORY}/contents/decks/${encodeURIComponent(deckId)}.json`;
+}
+
+/** 認証・権限の失敗を共通の文言にする。該当しなければ null（呼び出し側で扱う） */
+function describeAuthFailure(status: number): string | null {
+  if (status === 401) return "トークンが無効です (401)。設定画面で確認してください。";
+  if (status === 403) return "書き込みが拒否されました (403)。トークンの権限を確認してください。";
+  return null;
+}
+
+/**
+ * デッキを新規作成する。`sha` を渡さない PUT なので、同じファイルが既にあると
+ * GitHub が 422 を返す（2026-08-28 に実 API で確認）。画面側の重複チェックを
+ * すり抜けた場合の最後の砦になる。
+ */
+export function createDeck(token: string, deck: Deck): Promise<Deck> {
+  const operation = writeQueue.then(() => createDeckOnce(token, deck));
+  writeQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function createDeckOnce(token: string, deck: Deck): Promise<Deck> {
+  // id・name の形式チェックはここで一度だけ行う（画面側の検証とは独立させる）
+  const next = validateDeck(deck, deck.id);
+  const response = await apiRequest<ContentsResponse>(deckContentsPath(next.id), token, {
+    method: "PUT",
+    body: JSON.stringify({
+      message: `deck(${next.id}): create`,
+      content: encodeBase64Utf8(`${JSON.stringify(next, null, 2)}\n`),
+      branch: BRANCH,
+    }),
+  });
+  if (response.status === 201 || response.status === 200) return next;
+  if (response.status === 422) throw new Error(`デッキ「${next.id}」は既にあります。別の id にしてください。`);
+  const auth = describeAuthFailure(response.status);
+  if (auth) throw new Error(auth);
+  throw new Error(`デッキの作成に失敗しました (${response.status}): ${response.data.message ?? "不明なエラー"}`);
+}
+
+/**
+ * デッキのファイルを削除する。**すでに無い（404）ときは成功として扱う。**
+ * GitHub 側だけ消えて端末の後片付けが失敗したとき、もう一度削除を押せば
+ * 後片付けだけをやり直せるようにするため（`docs/decisions/006` 参照）。
+ */
+export function deleteDeck(deckId: string, token: string): Promise<void> {
+  const operation = writeQueue.then(() => deleteDeckOnce(deckId, token));
+  writeQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function deleteDeckOnce(deckId: string, token: string): Promise<void> {
+  const found = await apiRequest<ContentsResponse>(`${deckContentsPath(deckId)}?ref=${BRANCH}`, token);
+  if (found.status === 404) return;
+  if (found.status !== 200 || !found.data.sha) {
+    throw new Error(describeAuthFailure(found.status) ?? `デッキ「${deckId}」の最新版を取得できませんでした (${found.status})`);
+  }
+  const response = await apiRequest<ContentsResponse>(deckContentsPath(deckId), token, {
+    method: "DELETE",
+    body: JSON.stringify({ message: `deck(${deckId}): delete`, sha: found.data.sha, branch: BRANCH }),
+  });
+  // 取得と削除の間に他から消されていても、結果は同じなので成功扱いにする
+  if (response.status === 200 || response.status === 404) return;
+  const auth = describeAuthFailure(response.status);
+  if (auth) throw new Error(auth);
+  throw new Error(`デッキの削除に失敗しました (${response.status}): ${response.data.message ?? "不明なエラー"}`);
+}
+
 export function decodeBase64Utf8(value: string): string {
   const normalized = value.replace(/\s/g, "");
   const binary = atob(normalized);

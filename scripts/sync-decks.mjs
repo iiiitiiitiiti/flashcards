@@ -97,6 +97,22 @@ if (dirty !== "") {
   fail("先にコミットするか元へ戻してから実行してください");
 }
 
+// アプリから GitHub へ直接デッキを書けるようになったので、手元が遅れていることがある。
+// 遅れたまま進むと 4/4 の push が非 fast-forward で弾かれる（git が止めるのでデータは壊れないが、
+// 3段目まで走ってから分かりにくく失敗する）。先に確かめて冒頭で止める。
+const fetched = spawnSync("git", ["fetch", "origin", "main"], { cwd: root, encoding: "utf8", stdio: "inherit" });
+if (fetched.status !== 0) {
+  console.warn("! origin から取得できませんでした。手元が最新かどうかは確認できていません。");
+} else {
+  const behind = run("git", ["rev-list", "--count", "HEAD..origin/main"], { capture: true }).trim();
+  if (behind !== "0") {
+    console.error(`\n✗ 手元が origin/main より ${behind} コミット遅れています。`);
+    console.error("アプリからデッキを追加・編集していると起こります。先に取り込んでから実行してください:");
+    console.error("   git pull --ff-only");
+    process.exit(1);
+  }
+}
+
 // 生成する前に、比べる相手（コミット済みの内容）を読んでおく
 const head = readDecksFromHead();
 

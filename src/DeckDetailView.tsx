@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
-import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
+import { deleteDeckLocalData, deleteImportDraft, deleteProgress, deleteProgressByDeck, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
 import { appendCards, parseTags, upsertCard } from "./deckedit";
+import { downloadBackup } from "./backup";
+import { ModalSheet } from "./ModalSheet";
 import { buildPageItems, CARDS_PER_PAGE, clampPage } from "./pagination";
-import { writeDeck } from "./github";
+import { deleteDeck, writeDeck } from "./github";
 import { loadToken } from "./storage";
 import type { ImportDraft, ProgressRecord } from "./types";
 
@@ -15,6 +17,8 @@ interface DeckDetailViewProps {
   onClose: () => void;
   /** GitHub への保存成功後に、保存結果の最新デッキを渡す（App が即時反映する） */
   onDeckUpdated: (deck: Deck) => void;
+  /** デッキと端末側データの削除が両方とも終わったとき */
+  onDeckDeleted: () => void;
 }
 
 interface EditorState {
@@ -26,7 +30,7 @@ interface EditorState {
   tags: string;
 }
 
-export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewProps) {
+export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: DeckDetailViewProps) {
   const [search, setSearch] = useState("");
   /** 実際に絞り込みへ使う検索語。数万枚のデッキで1文字ごとの全走査を避けるため遅らせる */
   const [appliedSearch, setAppliedSearch] = useState("");
@@ -40,6 +44,11 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
   const csvInputRef = useRef<HTMLInputElement>(null);
   const [progressByCard, setProgressByCard] = useState<Map<string, ProgressRecord>>(new Map());
   const [page, setPage] = useState(1);
+  // デッキ削除の確認ダイアログ。deleteName がデッキ名と一致するまで削除ボタンは押せない
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteName, setDeleteName] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const canEdit = loadToken() !== "";
 
   useEffect(() => {
@@ -266,6 +275,54 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
     setMessage("進捗をリセットしました。");
   }
 
+  function openDeleteDialog() {
+    setDeleteName("");
+    setDeleteMessage(null);
+    setConfirmingDelete(true);
+  }
+
+  /** 削除の前に、この端末の学習記録を書き出しておけるようにする */
+  async function handleBackupBeforeDelete() {
+    setDeleteMessage(null);
+    try {
+      const { progressCount, logCount, noteCount } = await downloadBackup();
+      setDeleteMessage(`進捗 ${progressCount} 件・ログ ${logCount} 件・メモ ${noteCount} 件を書き出しました。`);
+    } catch (error) {
+      setDeleteMessage(error instanceof Error ? error.message : "書き出しに失敗しました。");
+    }
+  }
+
+  /**
+   * デッキを削除する。**GitHub を先に消し、成功してから端末側を消す。**
+   * 逆順にすると、GitHub 側が失敗したときに進捗だけ消えて戻せなくなる。
+   * GitHub 側だけ成功して端末側が失敗しても、`deleteDeck` は 404 を成功として扱うので、
+   * もう一度押せば後片付けだけをやり直せる。
+   */
+  async function handleDeleteDeck() {
+    if (deleting || deleteName.trim() !== deck.name) return;
+    setDeleting(true);
+    setDeleteMessage(null);
+    try {
+      await deleteDeck(deck.id, loadToken());
+    } catch (error) {
+      setDeleteMessage(
+        `${error instanceof Error ? error.message : "削除に失敗しました。"} この端末の学習記録はそのまま残っています。`,
+      );
+      setDeleting(false);
+      return;
+    }
+    try {
+      await deleteDeckLocalData(deck.id);
+    } catch (error) {
+      setDeleteMessage(
+        `GitHub からは削除しましたが、この端末のデータを消せませんでした: ${error instanceof Error ? error.message : "不明なエラー"} もう一度「削除する」を押すと、後片付けだけやり直せます。`,
+      );
+      setDeleting(false);
+      return;
+    }
+    onDeckDeleted();
+  }
+
   return (
     <section>
       <header className="app-header app-header-centered">
@@ -421,7 +478,57 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewP
       <div className="deck-footer">
         <button type="button" onClick={() => void handleResetDeckProgress()}>このデッキの学習進捗をリセット</button>
         <p className="muted">この端末の学習記録だけを消します。カードは消えません。</p>
+        {canEdit && (
+          <>
+            <button type="button" className="danger" onClick={openDeleteDialog}>このデッキを削除</button>
+            <p className="muted">デッキ本体を GitHub から消します。取り消せません。</p>
+          </>
+        )}
       </div>
+
+      {confirmingDelete && (
+        <ModalSheet label="デッキを削除" onCancel={() => (deleting ? undefined : setConfirmingDelete(false))}>
+          <h2>デッキを削除</h2>
+          <p>
+            「{deck.name}」（全 {deck.cards.length} 枚）を削除します。<strong>取り消せません。</strong>
+          </p>
+          <ul className="delete-scope">
+            <li>GitHub 上の decks/{deck.id}.json（カードも一緒に消えます）</li>
+            <li>この端末の学習進捗・評価ログ・メモ・非表示設定</li>
+          </ul>
+          {deck.id.startsWith("quiz-") && (
+            <p className="notice warning">
+              このデッキは Excel から自動生成している可能性があります。その場合、次回の取り込みでカードだけ復活します（学習進捗は戻りません）。
+            </p>
+          )}
+          <button type="button" disabled={deleting} onClick={() => void handleBackupBeforeDelete()}>
+            先にバックアップを書き出す
+          </button>
+          <label>
+            確認のため、デッキ名「{deck.name}」を入力してください
+            <input
+              type="text"
+              value={deleteName}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(event) => setDeleteName(event.target.value)}
+            />
+          </label>
+          {deleteMessage && <p className="notice warning">{deleteMessage}</p>}
+          <div className="sheet-actions">
+            <button
+              type="button"
+              className="danger"
+              disabled={deleting || deleteName.trim() !== deck.name}
+              onClick={() => void handleDeleteDeck()}
+            >
+              {deleting ? "削除中…" : "削除する"}
+            </button>
+            <button type="button" disabled={deleting} onClick={() => setConfirmingDelete(false)}>キャンセル</button>
+          </div>
+        </ModalSheet>
+      )}
     </section>
   );
 }

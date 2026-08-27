@@ -185,3 +185,19 @@ export async function importBackup(value: unknown): Promise<ImportResult> {
   await tx.done;
   return { progressImported, progressSkipped, logsImported, notesImported, hiddenImported };
 }
+
+/**
+ * バックアップを書き出してダウンロードさせる。書き出した内容の概要を返す。
+ * 設定画面と、デッキ削除の確認ダイアログで共有する。
+ */
+export async function downloadBackup(): Promise<BackupExport> {
+  const result = await exportBackup();
+  const url = URL.createObjectURL(result.blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `flashcards-backup-${new Date(result.exportedAt).toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  // click 直後に revoke すると、保存が始まる前に無効になる端末がある
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return result;
+}
