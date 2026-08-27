@@ -6,6 +6,7 @@ import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewI
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
 import { splitGraphemes } from "./text";
+import { useVisibleViewport, viewportStyle } from "./viewport";
 import type { ProgressRecord, ReviewRating, StudyMode, StudyOrder } from "./types";
 
 interface StudyViewProps {
@@ -176,6 +177,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const buzzerChars = useMemo(() => (current ? splitGraphemes(current.card.front) : []), [current]);
   const [shownChars, setShownChars] = useState(0);
   const [buzzedAt, setBuzzedAt] = useState<number | null>(null);
+
+  // メモはキーボードが出るので、見えている領域に合わせて背景ごと縮める
+  // （合わせないと iOS が画面全体を持ち上げ、後ろの学習画面までずれる）。
+  // dialogs の定義位置は早期 return より後ろなので、フックは必ずここで呼ぶ
+  const noteViewport = useVisibleViewport(noteEditing !== null);
 
   // 取り消しで戻したカードは計測をやり直さない（下の効果が上書きするのを防ぐ）
   const restoreElapsedRef = useRef<number | null>(null);
@@ -612,7 +618,13 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const dialogs = (
     <>
       {noteEditing !== null && (
-        <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="メモ">
+        <div
+          className="sheet-backdrop"
+          style={viewportStyle(noteViewport)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="メモ"
+        >
           <div className="sheet">
             <h2>メモ</h2>
             <textarea
