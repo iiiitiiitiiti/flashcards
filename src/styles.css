@@ -1076,6 +1076,19 @@ textarea {
   padding: 16px;
 }
 
+/* シート下部のボタン。横並びだと「開始」が小さいので、幅いっぱいの縦積みにする */
+.sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sheet-actions button {
+  width: 100%;
+  min-height: 48px;
+  font-size: 15px;
+}
+
 .sheet {
   width: 100%;
   max-width: 608px;
