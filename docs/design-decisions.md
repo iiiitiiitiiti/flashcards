@@ -399,3 +399,30 @@ Excel を直したあとのデッキ更新は手で3ステップ（生成 → va
 - `.flip-scene` は `<div>` なので、めくり・スワイプのアニメーションとは衝突しない
 
 却下案と検証結果は `docs/decisions/003_press-feedback-tap-highlight.md`。
+
+## 2026-08-27（訂正）: Codex レビューと敵対的検証で見つかった3件
+
+### 1. IndexedDB の真因を取り違えていた
+
+「要求と要求の間で `await` するとトランザクションが自動確定する」と書いたが、**誤り**。素の IndexedDB で測った結果：
+
+- `await put(a); await put(b);` → **両方コミットされる**
+- 間に `setTimeout` を挟むと `InvalidStateError`（**IDB 以外を待ったときだけ**確定する）
+- **成功した要求のあとに例外が抜けると、その要求はコミットされる** ← 注入試験で踏んだのはこれ
+
+真因は「例外が抜けてもトランザクションは中止されない」こと。効いていたのは `abort()` の方だった。
+同じ穴が **`saveReview` に残っていた**（毎回の評価が通る主経路）。両方を `runAtomically` に通し、
+`tx.done` を最初に掴む・要求を作った端から登録する・失敗したら `abort` して `allSettled` で後始末、へ統一。
+詳細は `docs/decisions/002`。
+
+### 2. 押下表現は iOS で成立していなかった
+
+**iOS Safari はタップで `:active` を当てない。** タップハイライトを消したうえで `:active` だけに頼ると、
+iPhone では押した手応えが完全に消える。`main.tsx` で `pointerdown` → `data-pressed` を付け外しし、
+CSS は `:active` と `[data-pressed]` の両方に当てる。`<summary>` も対象に含めた。
+解除に `pointerout` は使わない（子の `svg` へ移っただけで飛ぶ）。詳細は `docs/decisions/003`。
+
+### 3. 保存中に画面を離せてしまった
+
+取り消しの書き込み中でもリザルトの「つづける」「終了する」、カードのメモ・非表示が押せた。
+書き込み前の DB を新しいセッションが読む経路になるため、`saving` の間は無効化する。

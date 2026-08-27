@@ -13,17 +13,30 @@
 ### 決定
 
 `*` に `-webkit-tap-highlight-color: transparent` を当てて既定のハイライトを消し、
-代わりに `button:active:not(:disabled)` で `scale(0.96)` と `opacity: 0.72` を 0.12s で当てる。
+代わりに `scale(0.96)` と `opacity: 0.72` を 0.12s で当てる。
 アプリ内設定の `data-motion="crossfade"`（動きを減らす）では `transform: none` にして、薄くなるだけにする。
 
 押した見た目は `:hover` ではなく **`:active` で作る**。iOS では `:hover` を付けるとタップ後に状態が居座るため。
+
+**ただし `:active` だけでは iOS で成立しない**（2026-08-27 追記。初版はこれを見落として一度デプロイした）。
+iOS Safari はタップで `:active` を当てないため、ハイライトを消しただけでは **iPhone で押した手応えが完全に消える**。
+主な利用環境がまさに iPhone なので、`main.tsx` で `pointerdown` を拾って押した要素へ `data-pressed` を付け、
+CSS は `button:active` と `button[data-pressed]` の両方に同じ見た目を当てる。
+解除は `pointerup` / `pointercancel` / `pointerleave` / `contextmenu` / `window.blur`。
+`pointerout` は**使わない**（アイコンの `svg` へ移っただけで飛ぶので、押している最中に解除されてしまう）。
+
+対象は `button` と `<summary>`。`*` でハイライトを消す以上、**押せるものすべてに代わりの表現を用意する**。
+`<summary>` は幅いっぱいなので縮小せず、薄くするだけにする。
 
 ### 比較した代替案
 
 - 却下: **薄い背景色を敷く**（`.nav-tab:active { background: rgba(...) }` ＋ `filter: brightness()`）
   — 面で押すものとの相性はよいが、ユーザーが「軽く沈む」を選んだ。色を足すぶんテーマの色数が増える
 - 却下: **ハイライトを消すだけで押下表現を付けない** — 最も静かだが、タップが効いたか分からなくなる
-- 採用: **軽く沈む**（縮小＋減光）— 色を足さずに反応を返せる
+- 却下: **`:active` だけで済ませる**（初版）— iOS では発火しないため、iPhone で手応えがゼロになる
+- 却下: **`document` に空の `touchstart` リスナーを足す**（`:active` を効かせる古典的な回避策）— 差分は小さいが、効くかどうかが端末・OS 版に依存する。押下の開始と解除を自分で持つ方が確実で、条件も読める
+- 却下: **`-webkit-tap-highlight-color` の適用を `button` だけに絞る**（Codex 案）— `<summary>` は黒い明滅が残ったままになる。ユーザーの指摘は「タップすると一瞬暗くなる」全般なので、狭めるのではなく `<summary>` にも代わりの表現を足す方を採った
+- 採用: **軽く沈む**（縮小＋減光）＋ `pointerdown` 由来の `data-pressed`
 
 ### 影響範囲
 
@@ -46,3 +59,4 @@ preview（:4173）＋ Playwright 390×844、SW を unregister してから測定
 ### 関連ファイル
 
 - `src/styles.css`
+- `src/main.tsx`
