@@ -29,6 +29,8 @@ interface StudyResultProps {
   canContinue: boolean;
   /** 直前の評価を取り消せるか（最後の1枚を誤ってスワイプした場合の戻り道） */
   canUndo: boolean;
+  /** 保存中。取り消しの書き込みが終わる前に画面を離させない */
+  busy: boolean;
   onUndo: () => void;
   /** 絞り込んで学習していたタグ。残り0枚の案内を「デッキ」ではなくタグで書くのに使う */
   tag: string | null;
@@ -130,7 +132,7 @@ function Gauge({ percent }: { percent: number }) {
   );
 }
 
-export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, tag, onUndo, onContinue, onFinish }: StudyResultProps) {
+export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, busy, tag, onUndo, onContinue, onFinish }: StudyResultProps) {
   const labels = mode === "buzzer" ? BUZZER_RATING_LABELS : RATING_LABELS;
 
   return (
@@ -148,15 +150,15 @@ export function StudyResult({ mode, entries, percent, phaseGain, reason, canCont
         )}
         <div className="result-actions">
           {canContinue && (
-            <button type="button" className="primary result-continue" onClick={onContinue}>
+            <button type="button" className="primary result-continue" disabled={busy} onClick={onContinue}>
               つづける
             </button>
           )}
-          <button type="button" className="result-finish" onClick={onFinish}>
+          <button type="button" className="result-finish" disabled={busy} onClick={onFinish}>
             終了する
           </button>
           {canUndo && (
-            <button type="button" className="result-undo" onClick={onUndo}>
+            <button type="button" className="result-undo" disabled={busy} onClick={onUndo}>
               直前の評価を取り消す
             </button>
           )}

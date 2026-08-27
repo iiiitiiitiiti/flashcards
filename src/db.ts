@@ -104,13 +104,50 @@ export async function readAllProgress(): Promise<ProgressRecord[]> {
   return db.getAll("cardProgress");
 }
 
+/**
+ * 複数の書き込みを「全部入るか、1つも入らないか」にする。
+ *
+ * IndexedDB は**例外が抜けてもトランザクションを中止しない**。成功済みの要求はそのまま
+ * コミットされるので、途中で失敗したら明示的に `abort()` しないと半端な状態が残る
+ * （2026-08-27 に注入試験で再現。`docs/decisions/002` 参照）。
+ *
+ * `tx.done` は idb がトランザクション生成時に作るので、失敗を捕まえるのが遅れると
+ * 未処理の rejection になる。要求と一緒に最初から待つ。
+ *
+ * 要求は**引数ではなく `issue` の中で作る**。引数で作ると、要求の生成そのものが例外を
+ * 投げたときに abort へ入れず、先に成功した要求がコミットされてしまう。
+ * さらに `add` で**作った端から登録する**。まとめて返す形にすると、2つ目の生成で
+ * 例外が出たときに1つ目の Promise が迷子になり、abort の AbortError が未処理になる。
+ */
+async function runAtomically(
+  tx: { done: Promise<void>; abort(): void },
+  issue: (add: (request: Promise<unknown>) => void) => void,
+): Promise<void> {
+  const done = tx.done;
+  const requests: Promise<unknown>[] = [];
+  try {
+    issue((request) => void requests.push(request));
+    await Promise.all([...requests, done]);
+  } catch (error) {
+    try {
+      tx.abort();
+    } catch {
+      // すでに中断・確定済みなら何もしない
+    }
+    // 中断で残りが AbortError になっても、未処理の rejection にしない
+    await Promise.allSettled([...requests, done]);
+    throw error;
+  }
+}
+
 /** 評価の保存。進捗とログを同一トランザクションで書き込む */
 export async function saveReview(record: ProgressRecord, log: ReviewLogEntry): Promise<void> {
   const db = await getDb();
   const tx = db.transaction(["cardProgress", "reviewLog"], "readwrite");
-  await tx.objectStore("cardProgress").put(record);
-  await tx.objectStore("reviewLog").put(log);
-  await tx.done;
+  await runAtomically(tx, (add) => {
+    add(tx.objectStore("cardProgress").put(record));
+    add(tx.objectStore("reviewLog").put(log));
+  });
 }
 
 export async function deleteProgress(deckId: string, cardId: string): Promise<void> {
@@ -244,25 +281,9 @@ export async function undoReview(
 ): Promise<void> {
   const db = await getDb();
   const tx = db.transaction(["cardProgress", "reviewLog"], "readwrite");
-  const requests: Promise<unknown>[] = [];
-  try {
-    // 2つの要求を await を挟まずに出す。間で待つと、片方だけ済んだところで
-    // トランザクションが確定してしまい、進捗だけ戻ってログが残る
+  await runAtomically(tx, (add) => {
     const progress = tx.objectStore("cardProgress");
-    requests.push(previous ? progress.put(previous) : progress.delete([deckId, cardId]));
-    requests.push(tx.objectStore("reviewLog").delete(reviewId));
-    await Promise.all(requests);
-    await tx.done;
-  } catch (error) {
-    // 片方だけ適用された状態を残さない
-    try {
-      tx.abort();
-    } catch {
-      // すでに中断・確定済みなら何もしない
-    }
-    // 中断で残りの要求が AbortError になっても、未処理の rejection にしない
-    for (const request of requests) void request.catch(() => undefined);
-    await tx.done.catch(() => undefined);
-    throw error;
-  }
+    add(previous ? progress.put(previous) : progress.delete([deckId, cardId]));
+    add(tx.objectStore("reviewLog").delete(reviewId));
+  });
 }

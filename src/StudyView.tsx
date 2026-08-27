@@ -547,7 +547,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
           entries={sessionLog}
           reason={result}
           canContinue={result === "interrupted" ? true : remaining > 0}
-          canUndo={undoStack.length > 0 && !saving}
+          canUndo={undoStack.length > 0}
+          busy={saving}
           onUndo={() => void undoLast()}
           tag={tag}
           onContinue={() => (result === "interrupted" ? resumeStudy() : onClose(true))}
@@ -575,6 +576,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
       <button
         type="button"
         className={`card-action${notes.has(current.card.id) ? " card-action-on" : ""}`}
+        disabled={saving}
         aria-label={notes.has(current.card.id) ? "メモを編集" : "メモを書く"}
         onClick={() => setNoteEditing({ cardId: current.card.id, text: notes.get(current.card.id) ?? "" })}
       >
@@ -584,6 +586,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         type="button"
         className="card-action"
         aria-label="このカードを非表示にする"
+        disabled={saving}
         onClick={() => setHideTarget(current.card.id)}
       >
         <HideIcon />

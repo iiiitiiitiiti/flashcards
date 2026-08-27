@@ -182,8 +182,20 @@ button {
   transition: transform 0.12s ease, opacity 0.12s ease;
 }
 
-button:active:not(:disabled) {
+/* data-pressed は main.tsx が付ける。iOS Safari はタップで :active を当てないため */
+button:active:not(:disabled),
+button[data-pressed]:not(:disabled) {
   transform: scale(0.96);
+  opacity: 0.72;
+}
+
+/* ディスクロージャーの見出しは幅いっぱいなので、縮小せず薄くするだけ */
+summary {
+  transition: opacity 0.12s ease;
+}
+
+summary:active,
+summary[data-pressed] {
   opacity: 0.72;
 }
 
@@ -959,7 +971,8 @@ textarea {
   transition: opacity 0.12s ease;
 }
 
-:root[data-motion="crossfade"] button:active:not(:disabled) {
+:root[data-motion="crossfade"] button:active:not(:disabled),
+:root[data-motion="crossfade"] button[data-pressed]:not(:disabled) {
   transform: none;
 }
 
