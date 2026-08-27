@@ -54,6 +54,14 @@ function reveal(container: HTMLElement) {
 
 const undoButton = () => screen.getByLabelText("1つ前のカードに戻る（直前の評価を取り消す）") as HTMLButtonElement;
 const remainingText = () => document.querySelector(".study-remaining")?.textContent ?? "";
+
+/**
+ * 評価はスワイプと同じ飛ばしアニメーション（260ms）を挟んでから確定するので、
+ * その間はロックがかかって取り消せない。押せるようになるまで待つ
+ */
+async function waitUntilUndoReady() {
+  await waitFor(() => expect(undoButton().disabled).toBe(false));
+}
 // 早押しボタンには文字を置いていない（実物と同じ）。読み上げ用の名前で引く
 
 beforeEach(() => {
@@ -94,6 +102,7 @@ describe("直前の評価を取り消す", () => {
     fireEvent.click(screen.getByText("わかった"));
     await waitFor(async () => expect(await readAllProgress()).toHaveLength(1));
 
+    await waitUntilUndoReady();
     fireEvent.click(undoButton());
 
     await waitFor(async () => expect(await readAllProgress()).toHaveLength(0));
@@ -124,6 +133,7 @@ describe("直前の評価を取り消す", () => {
     fireEvent.click(screen.getByText("わかった"));
     await waitFor(async () => expect((await readAllProgress())[0]?.progress.reps).toBe(4));
 
+    await waitUntilUndoReady();
     fireEvent.click(undoButton());
 
     await waitFor(async () => {
@@ -149,6 +159,7 @@ describe("直前の評価を取り消す", () => {
     await waitFor(() => expect(screen.getByLabelText("押す")).toBeTruthy());
     expect(remainingText()).toContain("残り 3 枚");
 
+    await waitUntilUndoReady();
     fireEvent.click(undoButton());
 
     // 再出題ぶんも消えて、元の3枚へ戻る（取り消しで枚数が増えない）
@@ -166,10 +177,12 @@ describe("直前の評価を取り消す", () => {
     fireEvent.click(screen.getByText("わかった"));
     await waitFor(async () => expect(await readAllProgress()).toHaveLength(2));
 
+    await waitUntilUndoReady();
     fireEvent.click(undoButton());
     await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("フランスの首都は"));
     expect(await readAllProgress()).toHaveLength(1);
 
+    await waitUntilUndoReady();
     fireEvent.click(undoButton());
     await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("日本の首都は"));
     await waitFor(async () => expect(await readAllProgress()).toHaveLength(0));

@@ -397,10 +397,13 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   }
 
   /** 評価の入口。ここでだけロックを取り、以降は handleRate が解除まで持つ */
+  /**
+   * 評価ボタンからの評価。スワイプと同じ向きへ飛ばしてから確定する
+   * （どちらの操作でも同じ手触りにする）。
+   * 向きはスワイプの割り当てに合わせ、「もう一度・不正解」が左、それ以外が右。
+   */
   function requestRate(rating: ReviewRating) {
-    if (!current || ratingLockRef.current) return;
-    ratingLockRef.current = true;
-    void handleRate(rating);
+    flyOut(rating === 1 ? -1 : 1, rating);
   }
 
   /** ロックを保持した状態で呼ぶこと（requestRate / flyOut 経由） */

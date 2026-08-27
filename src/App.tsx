@@ -578,7 +578,7 @@ export function App() {
                 ? "出題順はデッキ全体からランダムに選びます。"
                 : "出題順は復習（期限が近い順）→ 新規（デッキの上から順）です。"}
             </p>
-            <div className="button-row">
+            <div className="sheet-actions">
               <button
                 type="button"
                 className="primary"
