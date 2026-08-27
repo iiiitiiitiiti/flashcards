@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { exportBackup, importBackup } from "./backup";
+import { downloadBackup, importBackup } from "./backup";
 import { deleteProgressByKeys, readAllProgress } from "./db";
 import { estimateStorage, formatBytes, isQuotaExceeded, type StorageUsage } from "./quota";
 import { testConnection } from "./github";
@@ -117,15 +117,7 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
   async function handleExport() {
     setBackupMessage(null);
     try {
-      const { blob, exportedAt, progressCount, logCount, noteCount } = await exportBackup();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      const stamp = new Date(exportedAt).toISOString().slice(0, 10);
-      anchor.href = url;
-      anchor.download = `flashcards-backup-${stamp}.json`;
-      anchor.click();
-      // click 直後に revoke すると、保存が始まる前に無効になる端末がある
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      const { blob, exportedAt, progressCount, logCount, noteCount } = await downloadBackup();
       saveLastBackupAt(exportedAt);
       setLastBackupAt(exportedAt);
       setBackupMessage(`進捗 ${progressCount} 件・ログ ${logCount} 件・メモ ${noteCount} 件（${formatBytes(blob.size)}）を書き出しました。`);
