@@ -6,7 +6,7 @@ import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewI
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
 import { splitGraphemes } from "./text";
-import { useVisibleViewport, viewportStyle } from "./viewport";
+import { useVisibleViewport } from "./viewport";
 import type { ProgressRecord, ReviewRating, StudyMode, StudyOrder } from "./types";
 
 interface StudyViewProps {
@@ -178,10 +178,32 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const [shownChars, setShownChars] = useState(0);
   const [buzzedAt, setBuzzedAt] = useState<number | null>(null);
 
-  // メモはキーボードが出るので、見えている領域に合わせて背景ごと縮める
-  // （合わせないと iOS が画面全体を持ち上げ、後ろの学習画面までずれる）。
-  // dialogs の定義位置は早期 return より後ろなので、フックは必ずここで呼ぶ
-  const noteViewport = useVisibleViewport(noteEditing !== null);
+  /*
+   * メモは <dialog> の showModal で出す。上位レイヤーへ載るので親の overflow や重ね順の影響を受けず、
+   * 後ろの画面は不活性になる。
+   *
+   * ただし**モーダルにしただけでは iOS のずれは止まらない**。iOS が画面を持ち上げるのは
+   * 「入力欄がキーボードに隠れる位置にあるから」なので、決め手は配置の方（CSS で画面上部へ寄せる）。
+   * `visualViewport` の位置は、それでも持ち上げられたときの保険として上端へ足す。
+   */
+  const noteOpen = noteEditing !== null;
+  const noteDialogRef = useRef<HTMLDialogElement>(null);
+  const noteViewport = useVisibleViewport(noteOpen);
+
+  useEffect(() => {
+    const dialog = noteDialogRef.current;
+    if (!dialog) return;
+    // jsdom は showModal / close を実装していないので、無い側は open 属性で代用する
+    if (!noteOpen) {
+      if (!dialog.open) return;
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.open = false;
+      return;
+    }
+    if (dialog.open) return;
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.open = true;
+  }, [noteOpen]);
 
   // 取り消しで戻したカードは計測をやり直さない（下の効果が上書きするのを防ぐ）
   const restoreElapsedRef = useRef<number | null>(null);
@@ -617,14 +639,17 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   /** メモ入力と非表示の確認。どちらの学習画面でも同じものを重ねる */
   const dialogs = (
     <>
-      {noteEditing !== null && (
-        <div
-          className="sheet-backdrop"
-          style={viewportStyle(noteViewport)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="メモ"
-        >
+      <dialog
+        ref={noteDialogRef}
+        className="modal memo-dialog"
+        aria-label="メモ"
+        style={{ "--viewport-top": `${noteViewport.top}px` } as React.CSSProperties}
+        onCancel={(event) => {
+          event.preventDefault();
+          void closeNote();
+        }}
+      >
+        {noteEditing !== null && (
           <div className="sheet">
             <h2>メモ</h2>
             <textarea
@@ -632,15 +657,15 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
               value={noteEditing.text}
               placeholder="メモを入力"
               autoFocus
-              rows={5}
+              rows={4}
               onChange={(event) => setNoteEditing({ ...noteEditing, text: event.target.value })}
             />
             <button type="button" className="primary" onClick={() => void closeNote()}>
               とじる
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </dialog>
       {hideTarget !== null && (
         <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="このクイズを非表示にしますか？">
           <div className="sheet">

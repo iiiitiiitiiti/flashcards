@@ -1064,6 +1064,40 @@ textarea {
 
 /* ===== 学習開始シート・セグメント ===== */
 
+/*
+ * <dialog showModal> 用。上位レイヤーへ載るので、親の overflow や z-index の影響を受けない。
+ * 既定の枠・余白・中央寄せを外し、中の .sheet に見た目を任せる
+ */
+.modal {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+}
+
+.modal::backdrop {
+  background: rgba(63, 70, 77, 0.35);
+}
+
+/*
+ * メモは**画面上部**に置く。入力欄がキーボードに隠れる位置にあると、
+ * iOS Safari は画面全体を持ち上げて隠れないようにする（＝背景の学習画面までずれる）。
+ * 上に寄せておけば持ち上げる理由が無くなる。
+ * `--viewport-top` は、それでも持ち上げられたときに見える位置へ戻すための保険（`viewport.ts`）。
+ */
+.memo-dialog {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top) + var(--viewport-top, 0px));
+  left: 16px;
+  right: 16px;
+  width: auto;
+  max-width: 608px;
+  margin-inline: auto;
+}
+
 .sheet-backdrop {
   position: fixed;
   inset: 0;
