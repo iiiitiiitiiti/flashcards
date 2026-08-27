@@ -1157,9 +1157,54 @@ textarea {
   }
 }
 
+/*
+ * 早押しの「押す」。全幅の帯ではなく、押し込める丸ボタンとして作る（2026-08-27 ユーザー指定）。
+ * `primary` / `reveal-button` は付けない（背景と幅を上書きされるため）。色はテーマのティールのまま、
+ * 早押し機らしさは形と厚みで出す。
+ */
 .buzz-button {
+  width: 120px;
+  min-width: 120px;
+  height: 120px;
+  min-height: 120px;
+  margin: 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  color: var(--color-on-primary);
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: 0.2em;
+  /* letter-spacing は最後の1文字の右にも入るので、同じ量だけ字下げして中央に見せる */
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+  background: radial-gradient(circle at 50% 30%, #4f97a7 0%, var(--color-primary) 56%, #245e6b 100%);
+  box-shadow:
+    /* 側面の厚み */
+    0 6px 0 #1b4a55,
+    /* 落ち影 */
+    0 10px 16px rgba(63, 70, 77, 0.26),
+    /* 上面のハイライトと下側の陰り */
+    inset 0 2px 3px rgba(255, 255, 255, 0.42),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.2);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+/* 押すと厚みぶん沈み、影が縮む。汎用の縮小＋減光は打ち消す */
+.buzz-button:active:not(:disabled),
+.buzz-button[data-pressed]:not(:disabled) {
+  transform: translateY(5px);
+  opacity: 1;
+  box-shadow:
+    0 1px 0 #1b4a55,
+    0 2px 6px rgba(63, 70, 77, 0.24),
+    inset 0 2px 3px rgba(255, 255, 255, 0.28),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.24);
+}
+
+/* 動きを減らす設定でも、影の縮小だけは残す（沈まないと押した手応えが無くなる） */
+:root[data-motion="crossfade"] .buzz-button:active:not(:disabled),
+:root[data-motion="crossfade"] .buzz-button[data-pressed]:not(:disabled) {
+  transform: none;
 }
 
 /* ===== ページャ ===== */

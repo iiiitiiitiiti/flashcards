@@ -723,7 +723,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
               ))}
             </div>
           ) : buzzedAt === null ? (
-            <button type="button" className="primary reveal-button buzz-button" onClick={handleBuzzerTap}>
+            <button type="button" className="buzz-button" onClick={handleBuzzerTap}>
               押す
             </button>
           ) : (
