@@ -713,31 +713,33 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         </div>
         <footer className="study-actions">
           {error && <p className="notice warning">{error}</p>}
-          {revealed ? (
-            <div className="rating-buttons">
-              {BUZZER_BUTTONS.map(({ rating, label, className }) => (
-                <button key={rating} type="button" className={className} disabled={saving} onClick={() => requestRate(rating)}>
-                  <span className="rating-label">{label}</span>
-                  <span className="rating-interval">{intervals?.[rating]}</span>
+          {/* 状態で中身が変わっても高さが動かないよう、共通の枠に入れる（押した瞬間に問題文が下がるのを防ぐ） */}
+          <div className="buzzer-slot">
+            {revealed ? (
+              <div className="rating-buttons">
+                {BUZZER_BUTTONS.map(({ rating, label, className }) => (
+                  <button key={rating} type="button" className={className} disabled={saving} onClick={() => requestRate(rating)}>
+                    <span className="rating-label">{label}</span>
+                    <span className="rating-interval">{intervals?.[rating]}</span>
+                  </button>
+                ))}
+              </div>
+            ) : buzzedAt === null ? (
+              // ラベルは置かない（実物の早押しボタンに文字が無いのと同じ）。読み上げは aria-label で補う
+              <button type="button" className="buzz-button" aria-label="押す" onClick={handleBuzzerTap} />
+            ) : (
+              <div className="buzzer-actions">
+                {buzzedAt < buzzerChars.length && (
+                  <button type="button" className="buzz-resume" onClick={resumeBuzzer}>
+                    つづきを読む
+                  </button>
+                )}
+                <button type="button" className="primary reveal-button" onClick={reveal}>
+                  答えを表示
                 </button>
-              ))}
-            </div>
-          ) : buzzedAt === null ? (
-            <button type="button" className="buzz-button" onClick={handleBuzzerTap}>
-              押す
-            </button>
-          ) : (
-            <div className="buzzer-actions">
-              {buzzedAt < buzzerChars.length && (
-                <button type="button" className="buzz-resume" onClick={resumeBuzzer}>
-                  つづきを読む
-                </button>
-              )}
-              <button type="button" className="primary reveal-button" onClick={reveal}>
-                答えを表示
-              </button>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
           <p className="muted study-remaining">
             残り {queue.length} 枚
             {buzzedAt !== null ? `・${buzzedAt}/${buzzerChars.length} 文字で押した` : `・${shownChars}/${buzzerChars.length} 文字`}

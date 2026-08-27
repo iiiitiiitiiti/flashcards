@@ -22,6 +22,11 @@
   --color-chip-done-bg: #e7f2ec;
   --color-chip-done-text: #1e5a3c;
   --color-gauge-start: #f0c9c4;
+  /* 早押しボタン専用の赤。--color-again（不正解）や --color-danger とは役割が違うので分ける */
+  --color-buzz: #d23a2c;
+  --color-buzz-light: #e8695c;
+  --color-buzz-dark: #9c2419;
+  --color-buzz-edge: #7c1c13;
   --shadow-card: 0 1px 3px rgba(63, 70, 77, 0.07);
 }
 
@@ -602,13 +607,28 @@ body.study-lock {
 }
 
 /*
- * 早押しはフッターの高さを予約する。「押す」の丸ボタン（120px）と、押したあとの帯ボタンで
- * 高さが 168px ⇄ 96px と変わり、**押した瞬間にカードが 72px 伸びて問題文が組み直される**ため。
- * 下寄せにして、ボタンの位置（親指の届く高さ）は変えない。
+ * 早押しは、状態で中身が変わっても高さが動かないように枠を固定する。
+ * 「押す」の丸（120px）と押したあとの帯ボタンで高さが変わると、
+ * **押した瞬間にカードが伸びて問題文の位置が下がる**。
+ *
+ * フッターへ `min-height` を置く形は不十分だった。`padding-bottom` に
+ * `env(safe-area-inset-bottom)` が入る実機では「押す」の状態がその値を超えてしまい、
+ * 押した瞬間にセーフエリアぶんだけ縮む（デスクトップの検証では env() が 0 なので出ない）。
+ * 中身の側を固定するこの形なら、余白がいくつでも高さは揃う。
  */
-.study-buzzer .study-actions {
-  min-height: 168px;
-  justify-content: flex-end;
+.buzzer-slot {
+  min-height: 128px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.buzzer-slot > * {
+  width: 100%;
+}
+
+.buzzer-slot > .buzz-button {
+  width: 120px;
 }
 
 /* 自分で書いたメモ。出典側の補足（.study-note）とは見た目を分ける */
@@ -1192,16 +1212,12 @@ textarea {
   padding: 0;
   border: none;
   border-radius: 999px;
-  color: var(--color-on-primary);
-  font-size: 20px;
-  font-weight: 700;
-  /* letter-spacing は最後の1文字の右にも入るので、同じ量だけ字下げして中央に見せる */
-  letter-spacing: 0.18em;
-  text-indent: 0.18em;
-  background: radial-gradient(circle at 50% 30%, #4f97a7 0%, var(--color-primary) 56%, #245e6b 100%);
+  /* 文字は置かない。実物の早押しボタンと同じく、色と形だけで示す */
+  font-size: 0;
+  background: radial-gradient(circle at 50% 30%, var(--color-buzz-light) 0%, var(--color-buzz) 56%, var(--color-buzz-dark) 100%);
   box-shadow:
     /* 側面の厚み */
-    0 6px 0 #1b4a55,
+    0 6px 0 var(--color-buzz-edge),
     /* 落ち影 */
     0 10px 16px rgba(63, 70, 77, 0.26),
     /* 上面のハイライトと下側の陰り */
@@ -1216,7 +1232,7 @@ textarea {
   transform: translateY(5px);
   opacity: 1;
   box-shadow:
-    0 1px 0 #1b4a55,
+    0 1px 0 var(--color-buzz-edge),
     0 2px 6px rgba(63, 70, 77, 0.24),
     inset 0 2px 3px rgba(255, 255, 255, 0.28),
     inset 0 -2px 4px rgba(0, 0, 0, 0.24);
