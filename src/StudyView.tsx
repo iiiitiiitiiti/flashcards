@@ -602,6 +602,13 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   if (!current) return null;
 
   /** カードへの操作（メモ・非表示）。ヘッダーではなくカードの上に置く */
+  /*
+   * 早押しで答えを出す前は、メモと非表示を止める。読んでいる最中や押して止めている最中に
+   * ダイアログが割り込むと、そのまま答えが見えてしまう。
+   * 1つ前へ戻すのは誤操作の復旧なので、いつでも押せるままにする。
+   */
+  const cardEditLocked = saving || (mode === "buzzer" && !revealed);
+
   const cardActions = result === null && current && (
     <div className="card-actions">
       <button
@@ -617,7 +624,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
       <button
         type="button"
         className={`card-action${notes.has(current.card.id) ? " card-action-on" : ""}`}
-        disabled={saving}
+        disabled={cardEditLocked}
         aria-label={notes.has(current.card.id) ? "メモを編集" : "メモを書く"}
         onClick={() => setNoteEditing({ cardId: current.card.id, text: notes.get(current.card.id) ?? "" })}
       >
@@ -627,7 +634,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         type="button"
         className="card-action"
         aria-label="このカードを非表示にする"
-        disabled={saving}
+        disabled={cardEditLocked}
         onClick={() => setHideTarget(current.card.id)}
       >
         <HideIcon />
