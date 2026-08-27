@@ -27,6 +27,9 @@ interface StudyResultProps {
   reason: "interrupted" | "completed";
   /** まだ学習できるカードが残っているか */
   canContinue: boolean;
+  /** 直前の評価を取り消せるか（最後の1枚を誤ってスワイプした場合の戻り道） */
+  canUndo: boolean;
+  onUndo: () => void;
   /** 絞り込んで学習していたタグ。残り0枚の案内を「デッキ」ではなくタグで書くのに使う */
   tag: string | null;
   onContinue: () => void;
@@ -127,7 +130,7 @@ function Gauge({ percent }: { percent: number }) {
   );
 }
 
-export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, tag, onContinue, onFinish }: StudyResultProps) {
+export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, tag, onUndo, onContinue, onFinish }: StudyResultProps) {
   const labels = mode === "buzzer" ? BUZZER_RATING_LABELS : RATING_LABELS;
 
   return (
@@ -152,6 +155,11 @@ export function StudyResult({ mode, entries, percent, phaseGain, reason, canCont
           <button type="button" className="result-finish" onClick={onFinish}>
             終了する
           </button>
+          {canUndo && (
+            <button type="button" className="result-undo" onClick={onUndo}>
+              直前の評価を取り消す
+            </button>
+          )}
         </div>
         {reason === "completed" && !canContinue && (
           <p className="muted">

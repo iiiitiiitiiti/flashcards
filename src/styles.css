@@ -594,9 +594,15 @@ body.study-lock {
 /* カードへの操作（メモ・非表示）。ヘッダーではなくカードの上へ右寄せで置く */
 .card-actions {
   display: flex;
-  justify-content: flex-end;
+  /* 戻すボタンは左、メモ・非表示は右（役割が違うので離す） */
+  justify-content: space-between;
   gap: 8px;
   padding: 8px 16px 0;
+}
+
+.card-actions-right {
+  display: flex;
+  gap: 8px;
 }
 
 .card-action {
@@ -1213,6 +1219,16 @@ textarea {
 .result-continue {
   min-height: 46px;
   font-weight: 700;
+}
+
+.result-error {
+  margin: 8px 16px 0;
+}
+
+.result-undo {
+  border-color: transparent;
+  background: none;
+  font-size: 13px;
 }
 
 .result-finish {

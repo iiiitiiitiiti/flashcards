@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Deck, DeckCard } from "./deck";
-import { saveCardNote, saveReview, setCardHidden } from "./db";
+import { saveCardNote, saveReview, setCardHidden, undoReview } from "./db";
 import { describeStorageError } from "./quota";
 import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
@@ -41,6 +41,16 @@ function NoteIcon() {
   );
 }
 
+/** 1つ戻すアイコン（左向きの U ターン矢印） */
+function UndoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 9h11a5 5 0 0 1 0 10h-4" />
+      <path d="M8 5L4 9l4 4" />
+    </svg>
+  );
+}
+
 /** 非表示のアイコン（目に斜線） */
 function HideIcon() {
   return (
@@ -59,6 +69,23 @@ const MAX_ELAPSED_MS = 5 * 60 * 1000;
 interface QueueItem {
   card: DeckCard;
   isNew: boolean;
+}
+
+/** 評価を取り消すために控えておく1回ぶん。セッションを離れると消える */
+interface UndoEntry {
+  item: QueueItem;
+  /** 評価する前の進捗。初回評価だったカードは undefined */
+  previous: ProgressRecord | undefined;
+  reviewId: string;
+  rating: ReviewRating;
+  /** 取り消したあとに計測を引き継ぐための経過時間 */
+  elapsedMs: number;
+}
+
+/** キューの末尾に足した再出題を1つだけ取り除く */
+function withoutLastAppearance(items: QueueItem[], cardId: string): QueueItem[] {
+  const index = items.map((item) => item.card.id).lastIndexOf(cardId);
+  return index === -1 ? items : [...items.slice(0, index), ...items.slice(index + 1)];
 }
 
 const RATING_LABELS: Record<ReviewRating, string> = {
@@ -110,6 +137,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const [noteEditing, setNoteEditing] = useState<{ cardId: string; text: string } | null>(null);
   /** 非表示の確認を出しているカード */
   const [hideTarget, setHideTarget] = useState<string | null>(null);
+  /** 取り消せる評価。新しいものが末尾（押すたびに1つずつ戻る） */
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
   const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
   // 評価の多重実行を止める。state の saving は再レンダーまで false のままなので排他にならない
@@ -140,9 +169,14 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const [shownChars, setShownChars] = useState(0);
   const [buzzedAt, setBuzzedAt] = useState<number | null>(null);
 
+  // 取り消しで戻したカードは計測をやり直さない（下の効果が上書きするのを防ぐ）
+  const restoreElapsedRef = useRef<number | null>(null);
+
   useEffect(() => {
     // カードが変わったら計測を開始し、読み上げも最初から
-    setShownAt(Date.now());
+    const restored = restoreElapsedRef.current;
+    restoreElapsedRef.current = null;
+    setShownAt(restored === null ? Date.now() : Date.now() - restored);
     setShownChars(0);
     setBuzzedAt(null);
   }, [current, reviewedCount]);
@@ -295,6 +329,46 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     }
   }
 
+  /**
+   * 直前の評価を取り消して、そのカードへ戻る。
+   * 逆向きにスワイプしてしまったときの復旧用。進捗もログも評価前へ戻す。
+   */
+  async function undoLast() {
+    const entry = undoStack[undoStack.length - 1];
+    if (!entry || ratingLockRef.current) return;
+    ratingLockRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      await undoReview(deck.id, entry.item.card.id, entry.previous, entry.reviewId);
+    } catch (error) {
+      setError(describeStorageError(error, "評価の取り消しを保存"));
+      setSaving(false);
+      ratingLockRef.current = false;
+      return;
+    }
+    if (entry.previous) progressRef.current.set(entry.item.card.id, entry.previous);
+    else progressRef.current.delete(entry.item.card.id);
+    setQueue((items) => {
+      // 「もう一度」で末尾へ足した再出題を先に取り除いてから、先頭へ戻す
+      const rest = entry.rating === 1 ? withoutLastAppearance(items, entry.item.card.id) : items;
+      return [entry.item, ...rest];
+    });
+    setSessionLog((log) => log.slice(1));
+    setReviewedCount((count) => Math.max(0, count - 1));
+    setUndoStack((stack) => stack.slice(0, -1));
+    // 付け直しやすいよう答えを出したまま戻し、経過時間も引き継ぐ
+    // （計測をやり直すと、そのままスワイプしたときに「簡単」へ倒れてしまう）
+    restoreElapsedRef.current = entry.elapsedMs;
+    // リザルトから取り消したときは、そのカードの画面へ戻す
+    setResult(null);
+    setRevealed(true);
+    setFlying(false);
+    setDragX(0);
+    setSaving(false);
+    ratingLockRef.current = false;
+  }
+
   /** 出題から外す。評価はせず、そのカードをキューから抜くだけ（進捗は残す） */
   async function hideCard(cardId: string) {
     setHideTarget(null);
@@ -344,16 +418,18 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
       introducedDayKey: existing?.introducedDayKey ?? dayKey(now),
       updatedAt: now.getTime(),
     };
+    // 席を外したぶんまで足すと「プレイ時間」が実態と合わなくなるので上限で切る
+    const elapsedMs = Math.min(Math.max(0, now.getTime() - shownAt), MAX_ELAPSED_MS);
+    const reviewId = crypto.randomUUID();
     try {
       // 評価の瞬間に進捗とログを保存する（画面遷移やアニメを待たない）
       await saveReview(record, {
-        reviewId: crypto.randomUUID(),
+        reviewId,
         deckId: deck.id,
         cardId: target.card.id,
         rating,
         reviewedAt: now.getTime(),
-        // 席を外したぶんまで足すと「プレイ時間」が実態と合わなくなるので上限で切る
-        elapsedMs: Math.min(Math.max(0, now.getTime() - shownAt), MAX_ELAPSED_MS),
+        elapsedMs,
       });
     } catch (error) {
       setError(describeStorageError(error, "進捗を保存"));
@@ -380,6 +456,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
       ...log,
     ]);
     setReviewedCount((count) => count + 1);
+    setUndoStack((stack) => [...stack, { item: target, previous: existing, reviewId, rating, elapsedMs }]);
     setQueue((items) => {
       const rest = items.slice(1);
       // 「もう一度」はセッション末尾に再出題する
@@ -462,6 +539,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     return (
       <section className="study study-result">
         {header}
+        {error && <p className="notice warning result-error">{error}</p>}
         <StudyResult
           mode={mode}
           percent={retentionPercent(phases, deck.cards.length)}
@@ -469,6 +547,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
           entries={sessionLog}
           reason={result}
           canContinue={result === "interrupted" ? true : remaining > 0}
+          canUndo={undoStack.length > 0 && !saving}
+          onUndo={() => void undoLast()}
           tag={tag}
           onContinue={() => (result === "interrupted" ? resumeStudy() : onClose(true))}
           onFinish={() => onClose(false)}
@@ -482,6 +562,16 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   /** カードへの操作（メモ・非表示）。ヘッダーではなくカードの上に置く */
   const cardActions = result === null && current && (
     <div className="card-actions">
+      <button
+        type="button"
+        className="card-action"
+        aria-label="1つ前のカードに戻る（直前の評価を取り消す）"
+        disabled={undoStack.length === 0 || saving}
+        onClick={() => void undoLast()}
+      >
+        <UndoIcon />
+      </button>
+      <span className="card-actions-right">
       <button
         type="button"
         className={`card-action${notes.has(current.card.id) ? " card-action-on" : ""}`}
@@ -498,6 +588,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
       >
         <HideIcon />
       </button>
+      </span>
     </div>
   );
 
