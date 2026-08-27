@@ -1090,7 +1090,8 @@ textarea {
  */
 .memo-dialog {
   position: fixed;
-  top: calc(12px + env(safe-area-inset-top) + var(--viewport-top, 0px));
+  /* 78px = 「とじる」ボタン（39px）2個ぶん。上に張り付いて見えるので下げる（2026-08-27 ユーザー指定） */
+  top: calc(90px + env(safe-area-inset-top) + var(--viewport-top, 0px));
   left: 16px;
   right: 16px;
   width: auto;

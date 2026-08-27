@@ -270,3 +270,46 @@ describe("カードのメモ", () => {
     await waitFor(async () => expect(await readCardNotes("deck1")).toHaveLength(0));
   });
 });
+
+describe("早押し中はカードを編集させない", () => {
+  const memoButton = () => screen.getByLabelText(/^メモを(書く|編集)$/) as HTMLButtonElement;
+  const hideButton = () => screen.getByLabelText("このカードを非表示にする") as HTMLButtonElement;
+
+  it("読んでいる最中と、押して止めている最中は、メモ・非表示が押せない", () => {
+    renderStudy({ mode: "buzzer" });
+    // 文字送り中
+    expect(memoButton().disabled).toBe(true);
+    expect(hideButton().disabled).toBe(true);
+
+    // 押して止めている最中
+    fireEvent.click(screen.getByLabelText("押す"));
+    expect(memoButton().disabled).toBe(true);
+    expect(hideButton().disabled).toBe(true);
+
+    // 答えを出せば触れる
+    fireEvent.click(screen.getByText("答えを表示"));
+    expect(memoButton().disabled).toBe(false);
+    expect(hideButton().disabled).toBe(false);
+  });
+
+  it("通常学習では最初から押せる", () => {
+    renderStudy();
+    expect(memoButton().disabled).toBe(false);
+    expect(hideButton().disabled).toBe(false);
+  });
+
+  it("早押し中でも1つ前へ戻すボタンの状態は変えない（評価の有無だけで決まる）", async () => {
+    const { container } = renderStudy({ mode: "buzzer" });
+    expect(undoButton().disabled).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("押す"));
+    fireEvent.click(screen.getByText("答えを表示"));
+    fireEvent.click(screen.getByText("正解"));
+    await waitUntilUndoReady();
+
+    // 次のカードは文字送り中でも、取り消しは押せる
+    expect(memoButton().disabled).toBe(true);
+    expect(undoButton().disabled).toBe(false);
+    expect(container.querySelector(".buzzer-text")).toBeTruthy();
+  });
+});
