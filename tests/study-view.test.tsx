@@ -7,6 +7,7 @@
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Deck } from "../src/deck";
 import { readAllProgress, readAllReviewLog, readCardNotes, resetDbForTest } from "../src/db";
@@ -311,5 +312,67 @@ describe("早押し中はカードを編集させない", () => {
     expect(memoButton().disabled).toBe(true);
     expect(undoButton().disabled).toBe(false);
     expect(container.querySelector(".buzzer-text")).toBeTruthy();
+  });
+});
+
+describe("StrictMode（効果が setup → cleanup → setup で二度走る）", () => {
+  it("評価したあとに画面が次のカードへ進む", async () => {
+    // 本番の main.tsx は <StrictMode> で包んでいる。cleanup で倒したフラグを
+    // setup で戻していないと、2回目の setup 以降ずっと「アンマウント済み」と誤認する
+    const view = render(
+      <StrictMode>
+        <StudyView
+          deck={DECK}
+          initialProgress={[]}
+          mode="normal"
+          sessionSize={10}
+          order="sequential"
+          tag={null}
+          initialNotes={new Map()}
+          onHide={() => undefined}
+          onClose={() => undefined}
+        />
+      </StrictMode>,
+    );
+    expect(view.container.querySelector(".study-front")?.textContent).toBe("日本の首都は");
+
+    reveal(view.container);
+    fireEvent.click(screen.getByText("わかった"));
+
+    await waitFor(async () => expect(await readAllProgress()).toHaveLength(1));
+    // DB は書けても、画面が固まっていないこと
+    await waitFor(() => expect(view.container.querySelector(".study-front")?.textContent).toBe("フランスの首都は"));
+    expect(remainingText()).toContain("残り 2 枚");
+  });
+});
+
+describe("メモはモーダルとして開く", () => {
+  const memoButton = () => screen.getByLabelText(/^メモを(書く|編集)$/) as HTMLButtonElement;
+
+  it("showModal が使える環境では showModal を呼ぶ（open 属性の代用で済ませない）", async () => {
+    // jsdom は showModal / close を持たないので生やして観測する。
+    // これが無いと「fallback だけ動いていて native は呼んでいない」状態を見逃す
+    const calls: string[] = [];
+    const proto = HTMLDialogElement.prototype as unknown as Record<string, unknown>;
+    proto.showModal = function showModal(this: HTMLDialogElement) {
+      calls.push("showModal");
+      this.setAttribute("open", "");
+    };
+    proto.close = function close(this: HTMLDialogElement) {
+      calls.push("close");
+      this.removeAttribute("open");
+    };
+    try {
+      renderStudy();
+      fireEvent.click(memoButton());
+      await screen.findByPlaceholderText("メモを入力");
+      expect(calls).toEqual(["showModal"]);
+
+      fireEvent.click(screen.getByText("とじる"));
+      await waitFor(() => expect(calls).toEqual(["showModal", "close"]));
+    } finally {
+      delete proto.showModal;
+      delete proto.close;
+    }
   });
 });
