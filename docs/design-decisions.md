@@ -473,3 +473,20 @@ CSS は `:active` と `[data-pressed]` の両方に当てる。`<summary>` も�
 
 あわせて `button` と `summary` に `user-select: none` / `-webkit-touch-callout: none` を入れた。
 iOS はボタンの文字も選択対象にするため、早押しで押し込むと選択ハイライトや虫めがねが出る。
+
+## 2026-08-27: StudyView にコンポーネントテストを入れる
+
+`tests/` の 161件はすべてピュア関数で、**画面の状態遷移を守るテストが1つも無かった**。
+取り消し・再出題・早押しは手動確認と Playwright だけで支えていたので、`@testing-library/react` と
+`jsdom` を入れて10件追加（合計 171件）。
+
+- 環境は**ファイル先頭の `// @vitest-environment jsdom`** で切り替える。既存のテストは node 環境のままにしたいので、
+  設定ファイルを触らずに済むこの書き方を選んだ
+- **スワイプは触らない**。`PointerEvent` が jsdom に無い。ボタンで辿れる経路だけを見る
+- `jest-dom` は入れていない。`toBeDisabled()` の代わりに `.disabled` を見る
+- **`localStorage.clear()` は呼べない**。Node 25 が持つ native の localStorage が jsdom のものを覆っていて
+  `clear()` が生えていない。設定は `storage.ts` が例外を握って既定値へ倒れるので、そのまま任せる
+- 進捗の fixture は**手書きの DTO ではなく `rate()` を重ねて作る**。DTO の形が変わっても追随する
+
+**テストに歯があることを変異で確認した**。`withoutLastAppearance` の呼び出しを消すと「再出題も取り除く」が、
+`undoReview` のログ削除を消すと「進捗レコードごと消えて元のカードへ戻る」が、それぞれ**そのテストだけ**落ちる。
