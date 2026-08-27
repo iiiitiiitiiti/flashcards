@@ -1117,6 +1117,35 @@ textarea {
   margin-inline: auto;
 }
 
+/*
+ * 学習中のカード編集。メモと同じ理由で画面上部へ置く（入力欄がキーボードに隠れると
+ * iOS が画面ごと持ち上げる）。項目が多いので、見えている高さで頭打ちにして中でスクロールさせる。
+ */
+.card-edit-dialog {
+  position: fixed;
+  top: calc(24px + env(safe-area-inset-top) + var(--viewport-top, 0px));
+  left: 16px;
+  right: 16px;
+  width: auto;
+  max-width: 608px;
+  margin-inline: auto;
+}
+
+.card-edit-dialog .sheet {
+  /* --viewport-height はキーボードが出ている間の実際の高さ（viewport.ts が入れる） */
+  max-height: calc(var(--viewport-height, 100dvh) - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 見出しと入力欄は縦積み（カード一覧の .settings-group と同じ流儀） */
+.card-edit-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
 .sheet-backdrop {
   position: fixed;
   inset: 0;
