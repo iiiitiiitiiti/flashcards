@@ -157,9 +157,19 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const buzzerSpeed = useRef(loadBuzzerSpeed()).current;
 
   useEffect(() => {
-    // 学習中はページ全体のスクロール（iOS のバウンス含む）を止める
+    // 学習中はページ全体のスクロール（iOS のバウンス含む）を止める。
+    // body を position: fixed にすると先頭へ飛ぶので、控えた位置を top に入れて戻す。
+    // 実際にはホーム一覧が先に外れて位置が 0 に丸められることが多く、多くの場合 0 になる
+    const scrollY = window.scrollY;
+    document.documentElement.classList.add("study-lock");
     document.body.classList.add("study-lock");
-    return () => document.body.classList.remove("study-lock");
+    document.body.style.top = `-${scrollY}px`;
+    return () => {
+      document.documentElement.classList.remove("study-lock");
+      document.body.classList.remove("study-lock");
+      document.body.style.top = "";
+      window.scrollTo(0, scrollY);
+    };
   }, []);
 
   useEffect(
