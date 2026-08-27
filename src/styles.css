@@ -368,10 +368,26 @@ button.deck-card-body {
   overflow: hidden;
 }
 
+/*
+ * 学習中はページ全体のスクロールを止める。
+ * **iOS Safari は `overflow: hidden` を body に当てても文書のスクロールを止めない**
+ * （スクロールしているのは `html` の方）。`position: fixed` で高さを固定して初めて動かなくなる。
+ * 位置は StudyView 側で保存・復元する（fixed にすると先頭へ飛ぶため）。
+ */
+html.study-lock,
 body.study-lock {
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: manipulation;
+}
+
+body.study-lock {
+  position: fixed;
+  /* top は StudyView が控えたスクロール位置を入れる。bottom は指定しない
+     （指定すると top の負値ぶんだけ body が縦に伸びてしまう） */
+  left: 0;
+  right: 0;
+  width: 100%;
 }
 
 .study {
@@ -453,6 +469,8 @@ body.study-lock {
   gap: 4px;
   /* ページはスクロールさせない。カード本文が収まらない場合のみカード内でスクロール */
   overflow-y: auto;
+  /* カードの端まで来ても、その先をページへ伝えない（背後が動いて見えるのを防ぐ） */
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   cursor: pointer;
 }
