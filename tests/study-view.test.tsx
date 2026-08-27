@@ -9,7 +9,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Deck } from "../src/deck";
-import { readAllProgress, readAllReviewLog, resetDbForTest } from "../src/db";
+import { readAllProgress, readAllReviewLog, readCardNotes, resetDbForTest } from "../src/db";
 import { rate } from "../src/srs";
 import { StudyView } from "../src/StudyView";
 import type { ProgressRecord } from "../src/types";
@@ -228,5 +228,45 @@ describe("早押し", () => {
     const ratings = within(document.querySelector(".rating-buttons") as HTMLElement);
     expect(ratings.getByText("正解")).toBeTruthy();
     expect(ratings.getByText("不正解")).toBeTruthy();
+  });
+});
+
+describe("カードのメモ", () => {
+  const memoButton = () => screen.getByLabelText(/^メモを(書く|編集)$/) as HTMLButtonElement;
+
+  it("開くと入力欄が出て、とじると保存される", async () => {
+    renderStudy();
+    // 開く前は入力欄が無い
+    expect(document.querySelector(".note-input")).toBeNull();
+
+    fireEvent.click(memoButton());
+    const input = (await screen.findByPlaceholderText("メモを入力")) as HTMLTextAreaElement;
+    // jsdom は showModal を実装していないので、open 属性での代用が効いていること
+    expect((document.querySelector(".memo-dialog") as HTMLDialogElement).open).toBe(true);
+
+    fireEvent.change(input, { target: { value: "  東京は江戸から改称  " } });
+    fireEvent.click(screen.getByText("とじる"));
+
+    await waitFor(async () => {
+      const saved = await readCardNotes("deck1");
+      expect(saved).toHaveLength(1);
+      // 前後の空白は落として保存する
+      expect(saved[0].text).toBe("東京は江戸から改称");
+      expect(saved[0].cardId).toBe("001");
+    });
+    await waitFor(() => expect(document.querySelector(".note-input")).toBeNull());
+    expect((document.querySelector(".memo-dialog") as HTMLDialogElement).open).toBe(false);
+  });
+
+  it("空にするとメモを消す", async () => {
+    renderStudy({ initialNotes: new Map([["001", "あとで消す"]]) });
+    fireEvent.click(memoButton());
+    const input = (await screen.findByPlaceholderText("メモを入力")) as HTMLTextAreaElement;
+    expect(input.value).toBe("あとで消す");
+
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.click(screen.getByText("とじる"));
+
+    await waitFor(async () => expect(await readCardNotes("deck1")).toHaveLength(0));
   });
 });

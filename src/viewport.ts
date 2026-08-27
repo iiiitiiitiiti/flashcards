@@ -5,8 +5,9 @@
  * 画面全体をスクロールして持ち上げる。`position: fixed` のダイアログもまとめて動くので、
  * 背景の学習画面ごと上へずれてしまう。
  *
- * `visualViewport` の高さと位置をダイアログへ当てれば、入力欄は最初から見える位置に入る。
- * 持ち上げる理由が無くなるので、画面は動かない。
+ * **これ単体では持ち上げを止められない**（2026-08-27 に実機で確認）。持ち上げを起こさないのは
+ * 「入力欄をキーボードに隠れない位置へ置く」ことで、そちらが本筋。ここで返す位置は、
+ * それでも持ち上げられたときにダイアログを見える位置へ戻すための保険として使う。
  */
 import { useEffect, useState } from "react";
 
@@ -45,10 +46,4 @@ export function useVisibleViewport(active: boolean): VisibleViewport {
   }, [active]);
 
   return active ? viewport : FULL;
-}
-
-/** ダイアログの背景に当てるスタイル。高さが取れないときは CSS の `inset: 0` に任せる */
-export function viewportStyle(viewport: VisibleViewport): React.CSSProperties | undefined {
-  if (viewport.height === null) return undefined;
-  return { top: viewport.top, height: viewport.height, bottom: "auto" };
 }
