@@ -70,8 +70,9 @@ const MAX_ELAPSED_MS = 5 * 60 * 1000;
  * 早押しで、カードが出てから最初の1文字が出るまでの間。
  * 1文字ぶんの間隔（既定 120ms）だと、カードの入場アニメーション（`.flip-scene` の 0.28s）が
  * 終わる前に読み始めてしまい、構える時間が無い。
+ * 800ms は長すぎたため、120ms との中間へ寄せた（2026-08-27 ユーザー指定）。
  */
-const BUZZER_LEAD_IN_MS = 800;
+const BUZZER_LEAD_IN_MS = 450;
 
 interface QueueItem {
   card: DeckCard;
