@@ -383,8 +383,8 @@ body.study-lock {
 
 body.study-lock {
   position: fixed;
-  /* top は StudyView が控えたスクロール位置を入れる。bottom は指定しない
-     （指定すると top の負値ぶんだけ body が縦に伸びてしまう） */
+  /* bottom は指定しない（指定すると高さの算出が body の内容と食い違う） */
+  top: 0;
   left: 0;
   right: 0;
   width: 100%;

@@ -158,28 +158,29 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
 
   useEffect(() => {
     // 学習中はページ全体のスクロール（iOS のバウンス含む）を止める。
-    // body を position: fixed にすると先頭へ飛ぶので、控えた位置を top に入れて戻す。
-    // 実際にはホーム一覧が先に外れて位置が 0 に丸められることが多く、多くの場合 0 になる
-    const scrollY = window.scrollY;
+    // 位置の保存・復元はしない。ホーム一覧が先に外れて scrollY はたいてい 0 に丸められるうえ、
+    // 0 でない値が残ると body が `top: -Npx` になり、**学習画面そのものが上へずれる**
     document.documentElement.classList.add("study-lock");
     document.body.classList.add("study-lock");
-    document.body.style.top = `-${scrollY}px`;
     return () => {
       document.documentElement.classList.remove("study-lock");
       document.body.classList.remove("study-lock");
-      document.body.style.top = "";
-      window.scrollTo(0, scrollY);
     };
   }, []);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // **setup で必ず true へ戻す。** StrictMode は setup → cleanup → setup と走るので、
+    // cleanup で倒したままだと2回目以降ずっと「アンマウント済み」と誤認し、評価しても画面が進まない
+    mountedRef.current = true;
+    return () => {
       // 飛ばしている途中で画面を離れても、タイマーと後続の更新を残さない
       mountedRef.current = false;
       if (flyTimerRef.current !== undefined) window.clearTimeout(flyTimerRef.current);
-    },
-    [],
-  );
+      // タイマーを消すだけだと、飛ばしを待っている handleRate が finally へ辿り着けず宙に浮く
+      flyResolveRef.current?.();
+      flyResolveRef.current = undefined;
+    };
+  }, []);
 
   const current = queue[0];
 
@@ -255,6 +256,8 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const [dragX, setDragX] = useState(0);
   const [flying, setFlying] = useState(false);
   const flyTimerRef = useRef<number | undefined>(undefined);
+  /** 飛ばしの完了を待っている Promise の resolve。画面を離れるときに呼んで宙吊りにしない */
+  const flyResolveRef = useRef<(() => void) | undefined>(undefined);
   const mountedRef = useRef(true);
   const dragRef = useRef({ pointerId: -1, startX: 0, startY: 0, horizontal: false, suppressClick: false });
 
@@ -308,7 +311,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     setFlying(true);
     setDragX(direction * (window.innerWidth + 200));
     const animation = new Promise<void>((resolve) => {
-      flyTimerRef.current = window.setTimeout(resolve, FLY_OUT_MS);
+      flyResolveRef.current = resolve;
+      flyTimerRef.current = window.setTimeout(() => {
+        flyResolveRef.current = undefined;
+        resolve();
+      }, FLY_OUT_MS);
     });
     void handleRate(rating, animation);
   }
@@ -444,10 +451,21 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     flyOut(rating === 1 ? -1 : 1, rating);
   }
 
-  /** ロックを保持した状態で呼ぶこと（requestRate / flyOut 経由） */
+  /**
+   * ロックを保持した状態で呼ぶこと（requestRate / flyOut 経由）。
+   * `void` で呼ばれるので、**例外はここで必ず吸収する**。素通しすると未処理の rejection になり、
+   * `saving` が true のまま画面が固まる（`rate()` や `crypto.randomUUID()` は保存の try の外にある）。
+   */
   async function handleRate(rating: ReviewRating, animation?: Promise<void>) {
     try {
       await rateCard(rating, animation);
+    } catch (error) {
+      if (mountedRef.current) {
+        setError(describeStorageError(error, "評価の保存"));
+        setFlying(false);
+        setDragX(0);
+        setSaving(false);
+      }
     } finally {
       // rate() の例外など、想定外の失敗でもロックは必ず解除する
       ratingLockRef.current = false;

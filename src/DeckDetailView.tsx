@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
 import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
-import { appendCards, upsertCard } from "./deckedit";
+import { appendCards, parseTags, upsertCard } from "./deckedit";
 import { buildPageItems, CARDS_PER_PAGE, clampPage } from "./pagination";
 import { writeDeck } from "./github";
 import { loadToken } from "./storage";
@@ -24,14 +24,6 @@ interface EditorState {
   back: string;
   note: string;
   tags: string;
-}
-
-function parseTags(value: string): string[] | undefined {
-  const tags = value
-    .split(/[;,、]/)
-    .map((tag) => tag.trim())
-    .filter((tag) => tag !== "");
-  return tags.length > 0 ? tags : undefined;
 }
 
 export function DeckDetailView({ deck, onClose, onDeckUpdated }: DeckDetailViewProps) {
