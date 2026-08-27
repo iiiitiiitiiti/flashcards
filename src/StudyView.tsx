@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { CardEditor } from "./CardEditor";
 import type { Deck, DeckCard } from "./deck";
+import { buildCard, upsertCard, type CardForm } from "./deckedit";
+import { writeDeck } from "./github";
 import { saveCardNote, saveReview, setCardHidden, undoReview } from "./db";
 import { describeStorageError } from "./quota";
 import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
-import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds } from "./storage";
+import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds, loadToken } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
 import { splitGraphemes } from "./text";
 import { useVisibleViewport } from "./viewport";
@@ -27,6 +30,10 @@ interface StudyViewProps {
   initialNotes: Map<string, string>;
   /** カードを非表示にしたときに親へ伝える（一覧と統計を作り直すため） */
   onHide: (cardId: string) => void;
+  /** カードを直せるか（GitHub トークンがあるか）。カード一覧と同じ扱い */
+  canEditCards: boolean;
+  /** カードを編集して GitHub へ保存したときに親へ伝える（一覧とキャッシュを更新するため） */
+  onDeckUpdated: (deck: Deck) => void;
   /** 学習を終える。restart が true なら同じ設定でもう一度始める */
   onClose: (restart: boolean) => void;
 }
@@ -48,6 +55,16 @@ function UndoIcon() {
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M4 9h11a5 5 0 0 1 0 10h-4" />
       <path d="M8 5L4 9l4 4" />
+    </svg>
+  );
+}
+
+/** 編集のアイコン（鉛筆） */
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 20h4l10-10a2.1 2.1 0 0 0-3-3L5 17z" />
+      <path d="M14.5 6.5l3 3" />
     </svg>
   );
 }
@@ -115,7 +132,7 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, usedNewCardsToday, initialNotes, onHide, onClose }: StudyViewProps) {
+export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, usedNewCardsToday, initialNotes, canEditCards, onHide, onDeckUpdated, onClose }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
     const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay(), tag, usedNewCardsToday);
     const items = [
@@ -146,6 +163,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   const [noteEditing, setNoteEditing] = useState<{ cardId: string; text: string } | null>(null);
   /** 非表示の確認を出しているカード */
   const [hideTarget, setHideTarget] = useState<string | null>(null);
+  /** 編集ダイアログを開いているカード。null なら閉じている */
+  const [editingCard, setEditingCard] = useState<DeckCard | null>(null);
+
   /** 取り消せる評価。新しいものが末尾（押すたびに1つずつ戻る） */
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
@@ -424,6 +444,34 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     ratingLockRef.current = false;
   }
 
+  /**
+   * カードを直して GitHub へ保存し、手元のキューも差し替える。
+   * キューは開始時のスナップショットなので、書き戻さないと画面が古いままになる。
+   */
+  async function saveCard(form: CardForm): Promise<{ ok: boolean; message?: string }> {
+    const target = editingCard;
+    if (!target) return { ok: false };
+    const card = buildCard(target.id, form);
+    try {
+      const next = await writeDeck(deck.id, loadToken(), `deck(${deck.id}): edit card ${card.id}`, (latest) =>
+        upsertCard(latest, card),
+      );
+      if (!mountedRef.current) return { ok: true };
+      // 同じカードがキューに複数あることがある（「もう一度」の再出題）ので、全部差し替える
+      setQueue((items) => items.map((item) => (item.card.id === card.id ? { ...item, card } : item)));
+      setUndoStack((stack) =>
+        stack.map((entry) => (entry.item.card.id === card.id ? { ...entry, item: { ...entry.item, card } } : entry)),
+      );
+      // 表示中のカードを差し替えると計測がやり直しになるので、経過時間を引き継ぐ
+      restoreElapsedRef.current = Date.now() - shownAt;
+      setEditingCard(null);
+      onDeckUpdated(next);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "保存に失敗しました。" };
+    }
+  }
+
   /** 出題から外す。評価はせず、そのカードをキューから抜くだけ（進捗は残す） */
   async function hideCard(cardId: string) {
     setHideTarget(null);
@@ -649,6 +697,17 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         <UndoIcon />
       </button>
       <span className="card-actions-right">
+      {canEditCards && (
+        <button
+          type="button"
+          className="card-action"
+          aria-label="このカードを編集する"
+          disabled={cardEditLocked}
+          onClick={() => setEditingCard(current.card)}
+        >
+          <EditIcon />
+        </button>
+      )}
       <button
         type="button"
         className={`card-action${notes.has(current.card.id) ? " card-action-on" : ""}`}
@@ -701,6 +760,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
           </div>
         )}
       </dialog>
+      {editingCard !== null && (
+        <CardEditor card={editingCard} onSave={saveCard} onCancel={() => setEditingCard(null)} />
+      )}
       {hideTarget !== null && (
         <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="このクイズを非表示にしますか？">
           <div className="sheet">

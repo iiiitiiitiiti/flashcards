@@ -8,8 +8,15 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Deck } from "../src/deck";
+
+/** GitHub への書き込みは差し替える。返り値は mutate を当てた結果にして本物と同じ形にする */
+const writeDeckMock = vi.fn();
+vi.mock("../src/github", () => ({
+  writeDeck: (deckId: string, _token: string, _message: string, mutate: (deck: Deck) => Deck) =>
+    writeDeckMock(deckId, mutate),
+}));
 import { readAllProgress, readAllReviewLog, readCardNotes, resetDbForTest } from "../src/db";
 import { rate } from "../src/srs";
 import { StudyView } from "../src/StudyView";
@@ -29,6 +36,7 @@ const DECK: Deck = {
 function renderStudy(overrides: Partial<Parameters<typeof StudyView>[0]> = {}) {
   const closed: boolean[] = [];
   const hidden: string[] = [];
+  const updatedDecks: Deck[] = [];
   const view = render(
     <StudyView
       deck={DECK}
@@ -38,12 +46,14 @@ function renderStudy(overrides: Partial<Parameters<typeof StudyView>[0]> = {}) {
       order="sequential"
       tag={null}
       initialNotes={new Map()}
+      canEditCards
       onHide={(cardId) => hidden.push(cardId)}
+      onDeckUpdated={(next) => updatedDecks.push(next)}
       onClose={(restart) => closed.push(restart)}
       {...overrides}
     />,
   );
-  return { ...view, closed, hidden };
+  return { ...view, closed, hidden, updatedDecks };
 }
 
 /** 表向きのカードを1回押して答えを出す */
@@ -329,7 +339,9 @@ describe("StrictMode（効果が setup → cleanup → setup で二度走る）"
           order="sequential"
           tag={null}
           initialNotes={new Map()}
+          canEditCards={false}
           onHide={() => undefined}
+          onDeckUpdated={() => undefined}
           onClose={() => undefined}
         />
       </StrictMode>,
@@ -374,5 +386,80 @@ describe("メモはモーダルとして開く", () => {
       delete proto.showModal;
       delete proto.close;
     }
+  });
+});
+
+describe("学習中のカード編集", () => {
+  const editButton = () => screen.queryByLabelText("このカードを編集する") as HTMLButtonElement | null;
+
+  beforeEach(() => {
+    writeDeckMock.mockReset();
+    // 既定は「本物と同じように mutate を当てたデッキを返す」
+    writeDeckMock.mockImplementation((_deckId: string, mutate: (deck: Deck) => Deck) => Promise.resolve(mutate(DECK)));
+  });
+
+  it("トークンが無ければ編集ボタンを出さない", () => {
+    renderStudy({ canEditCards: false });
+    expect(editButton()).toBeNull();
+  });
+
+  it("開くと今の内容が入っている", async () => {
+    renderStudy({ deck: { ...DECK, cards: [{ ...DECK.cards[0], note: "補足", tags: ["地理", "首都"] }] } });
+    fireEvent.click(editButton() as HTMLButtonElement);
+    await screen.findByText("カードを編集");
+    expect((screen.getByLabelText(/表面/) as HTMLTextAreaElement).value).toBe("日本の首都は");
+    expect((screen.getByLabelText(/裏面/) as HTMLTextAreaElement).value).toBe("東京");
+    expect((screen.getByLabelText(/補足メモ/) as HTMLTextAreaElement).value).toBe("補足");
+    // タグは入力欄の書式（; 区切り）へ戻す
+    expect((screen.getByLabelText(/タグ/) as HTMLInputElement).value).toBe("地理; 首都");
+  });
+
+  it("表面が空なら保存させない", async () => {
+    renderStudy();
+    fireEvent.click(editButton() as HTMLButtonElement);
+    await screen.findByText("カードを編集");
+    fireEvent.change(screen.getByLabelText(/表面/), { target: { value: "   " } });
+    fireEvent.click(screen.getByText("GitHubへ保存"));
+
+    expect(await screen.findByText("表面と裏面は必須です。")).toBeTruthy();
+    expect(writeDeckMock).not.toHaveBeenCalled();
+  });
+
+  it("保存すると学習中のカードも差し替わる（キューは開始時のスナップショットのため）", async () => {
+    const view = renderStudy();
+    fireEvent.click(editButton() as HTMLButtonElement);
+    await screen.findByText("カードを編集");
+    fireEvent.change(screen.getByLabelText(/表面/), { target: { value: "日本の首都はどこ" } });
+    fireEvent.change(screen.getByLabelText(/タグ/), { target: { value: "地理, 首都" } });
+    fireEvent.click(screen.getByText("GitHubへ保存"));
+
+    await waitFor(() => expect(view.container.querySelector(".study-front")?.textContent).toBe("日本の首都はどこ"));
+    // 親へも渡してキャッシュを更新させる
+    await waitFor(() => expect(view.updatedDecks).toHaveLength(1));
+    const saved = view.updatedDecks[0].cards.find((card) => card.id === "001");
+    expect(saved?.front).toBe("日本の首都はどこ");
+    // 区切りは ; でも , でも受ける
+    expect(saved?.tags).toEqual(["地理", "首都"]);
+    // id は変えない（進捗のキーなので）
+    expect(saved?.id).toBe("001");
+  });
+
+  it("保存に失敗したらダイアログを閉じずに理由を出す", async () => {
+    writeDeckMock.mockRejectedValue(new Error("書き込みが拒否されました (403)。"));
+    renderStudy();
+    fireEvent.click(editButton() as HTMLButtonElement);
+    await screen.findByText("カードを編集");
+    fireEvent.click(screen.getByText("GitHubへ保存"));
+
+    expect(await screen.findByText("書き込みが拒否されました (403)。")).toBeTruthy();
+    expect(screen.getByText("カードを編集")).toBeTruthy();
+  });
+
+  it("早押しで答えを出す前は編集させない", () => {
+    renderStudy({ mode: "buzzer" });
+    expect((editButton() as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("押す"));
+    fireEvent.click(screen.getByText("答えを表示"));
+    expect((editButton() as HTMLButtonElement).disabled).toBe(false);
   });
 });

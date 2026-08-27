@@ -418,6 +418,18 @@ export function App() {
             tag={view.tag}
             usedNewCardsToday={usedNewCardsToday}
             initialNotes={view.notes}
+            canEditCards={loadToken() !== ""}
+            onDeckUpdated={(nextDeck) => {
+              // カード一覧と同じく、保存結果でスナップショットとキャッシュを即時更新する
+              const updated: DeckSnapshot = {
+                ...snapshot,
+                decks: snapshot.decks.map((candidate) =>
+                  candidate.deckId === entry.deckId ? { ...candidate, deck: nextDeck, fetchedAt: Date.now() } : candidate,
+                ),
+              };
+              void upsertDeckCacheEntry({ ...entry, deck: nextDeck, fetchedAt: Date.now() });
+              void applySnapshot(updated);
+            }}
             onHide={(cardId) => {
               // 統計とホームの枚数を作り直す。学習中の表示はセッション側が更新済み
               setHidden((previous) => {
