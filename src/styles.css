@@ -1039,6 +1039,11 @@ textarea {
   animation: card-enter-fade 0.28s ease;
 }
 
+/* シートはせり上がらせず、薄く現れるだけにする */
+:root[data-motion="crossfade"] .sheet-backdrop .sheet {
+  animation: card-enter-fade 0.24s ease;
+}
+
 :root[data-motion="crossfade"] .flip-inner,
 :root[data-motion="crossfade"] .flip-inner.flipped {
   transition: none;
@@ -1164,6 +1169,35 @@ textarea {
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
   /* キーボードが出ている間は中身を縮めてスクロールさせる（シートを画面外へ押し出さない） */
   overflow-y: auto;
+  animation: backdrop-fade 0.18s ease;
+}
+
+/*
+ * 下寄せのシート（学習開始・非表示の確認）は、下からせり上がりながら現れる
+ * （2026-08-28 ユーザー要望）。上寄せの .form-dialog には掛けない（出る向きが違う）。
+ */
+.sheet-backdrop .sheet {
+  animation: sheet-rise 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes backdrop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-rise {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* シート下部のボタン。横並びだと「開始」が小さいので、幅いっぱいの縦積みにする */
