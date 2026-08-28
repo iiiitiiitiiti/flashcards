@@ -10,7 +10,9 @@ import {
   readAllReviewLog,
   readDeckCache,
   resetDbForTest,
+  readImportDraft,
   saveCardNote,
+  saveImportDraft,
   saveReview,
   setCardHidden,
   upsertDeckCacheEntry,
@@ -44,6 +46,8 @@ async function seed(): Promise<void> {
   await saveCardNote("beta", "001", "ベータのメモ");
   await setCardHidden("alpha", "002", true);
   await setCardHidden("beta", "001", true);
+  await saveImportDraft({ draftId: "d1", deckId: "alpha", cards: [{ id: "x", front: "問", back: "答" }], createdAt: NOW.getTime() });
+  await saveImportDraft({ draftId: "d2", deckId: "beta", cards: [{ id: "y", front: "問", back: "答" }], createdAt: NOW.getTime() });
   await upsertDeckCacheEntry({ deckId: "alpha", deck: deck("alpha"), commitSha: "c1", fetchedAt: NOW.getTime() });
   await upsertDeckCacheEntry({ deckId: "beta", deck: deck("beta"), commitSha: "c1", fetchedAt: NOW.getTime() });
 }
@@ -63,7 +67,7 @@ describe("deleteDeckLocalData", () => {
     await seed();
 
     const removed = await deleteDeckLocalData("alpha");
-    expect(removed).toEqual({ progress: 2, notes: 2, hidden: 1, reviews: 2 });
+    expect(removed).toEqual({ progress: 2, notes: 2, hidden: 1, reviews: 2, drafts: 1 });
 
     expect((await readAllProgress()).map((row) => row.deckId)).toEqual(["beta"]);
     expect((await readAllCardNotes()).map((row) => row.deckId)).toEqual(["beta"]);
@@ -76,7 +80,7 @@ describe("deleteDeckLocalData", () => {
     await seed();
     await deleteDeckLocalData("alpha");
     // 2回目は消すものが無い。後片付けだけの再試行がここを通る
-    expect(await deleteDeckLocalData("alpha")).toEqual({ progress: 0, notes: 0, hidden: 0, reviews: 0 });
+    expect(await deleteDeckLocalData("alpha")).toEqual({ progress: 0, notes: 0, hidden: 0, reviews: 0, drafts: 0 });
     expect(await readAllProgress()).toHaveLength(1);
   });
 
@@ -99,6 +103,47 @@ describe("deleteDeckLocalData", () => {
     expect(await readAllCardNotes()).toHaveLength(3);
     expect(await readAllReviewLog()).toHaveLength(3);
     expect(await readDeckCache()).toHaveLength(2);
+  });
+
+  it("読み取りが中止されても、未処理の rejection を残さない", async () => {
+    await seed();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    // 3件目の getAllKeys でトランザクションごと中止させる。tx.done の AbortError を
+    // 誰も待っていないと未処理の rejection になる（runAtomically と同じ理屈）
+    let calls = 0;
+    const original = IDBIndex.prototype.getAllKeys;
+    vi.spyOn(IDBIndex.prototype, "getAllKeys").mockImplementation(function (
+      this: IDBIndex,
+      query?: IDBValidKey | IDBKeyRange | null,
+      count?: number,
+    ) {
+      calls += 1;
+      if (calls === 3) {
+        this.objectStore.transaction.abort();
+        throw new Error("注入した読み取り失敗");
+      }
+      return original.call(this, query, count);
+    });
+
+    await expect(deleteDeckLocalData("alpha")).rejects.toThrow();
+    vi.restoreAllMocks();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    process.off("unhandledRejection", onUnhandled);
+
+    expect(unhandled).toEqual([]);
+    // 書き込みへ進む前に止まっているので、端末のデータは1件も欠けていない
+    expect(await readAllProgress()).toHaveLength(3);
+  });
+
+  it("CSV インポートの下書きも消す（同じ id で作り直したときに蘇らせない）", async () => {
+    await seed();
+    await deleteDeckLocalData("alpha");
+    expect(await readImportDraft("alpha")).toBeUndefined();
+    // 他デッキの下書きは残る
+    expect(await readImportDraft("beta")).toBeDefined();
   });
 
   it("reviewLog は byDeck が無いので走査で拾う（他デッキのログを巻き込まない）", async () => {
@@ -167,13 +212,46 @@ describe("deleteDeck", () => {
     expect(JSON.parse(calls[1].body ?? "{}")).toMatchObject({ sha: "sha-9", message: "deck(alpha): delete" });
   });
 
-  it("すでに無い（404）なら成功として返し、DELETE は打たない", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 }));
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("404 でも、リポジトリが見えて書き込めるなら削除済みとして扱い、DELETE は打たない", async () => {
+    const calls: { url: string; method: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({ url, method: init?.method ?? "GET" });
+        // リポジトリ自体は見えて push 権限もある
+        if (url.endsWith("/repos/iiiitiiitiiti/flashcards")) {
+          return new Response(JSON.stringify({ full_name: "iiiitiiitiiti/flashcards", permissions: { push: true } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+      }),
+    );
     // ここで例外にすると、GitHub 側だけ消えたときに端末の後片付けへ辿り着けない
     await expect(deleteDeck("alpha", "token")).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // ファイルの 404 を鵜呑みにせず、リポジトリを見に行っている
+    expect(calls.some((call) => call.url.endsWith("/repos/iiiitiiitiiti/flashcards"))).toBe(true);
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+  });
+
+  it("404 でも、書き込み権限が無ければ削除済みと決めつけない", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/repos/iiiitiiitiiti/flashcards")) {
+          // 読めるが push できないトークン。ファイルの 404 は権限起因かもしれない
+          return new Response(JSON.stringify({ full_name: "iiiitiiitiiti/flashcards", permissions: { push: false } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+      }),
+    );
+    // ここで成功を返すと、GitHub にデッキが残ったまま端末の進捗だけ消える
+    await expect(deleteDeck("alpha", "token")).rejects.toThrow(/判断できません/);
+  });
+
+  it("404 で、リポジトリ自体も見えないなら失敗として伝える", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 })));
+    await expect(deleteDeck("alpha", "token")).rejects.toThrow(/確認できませんでした/);
   });
 
   it("権限が無ければ失敗として伝える", async () => {

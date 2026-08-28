@@ -14,6 +14,13 @@ vi.mock("../src/db", async (importOriginal) => ({
 const { resetDbForTest } = await import("../src/db");
 const { refreshSnapshot } = await import("../src/snapshot");
 
+/** テスト用: 追い越されていない前提で結果を取り出す（null は想定外なので落とす） */
+async function refreshCurrentSnapshot(token: string | null) {
+  const snapshot = await refreshSnapshot(token);
+  if (snapshot === null) throw new Error("refreshSnapshot が追い越されました（テストでは起こらないはず）");
+  return snapshot;
+}
+
 const COMMIT = "a".repeat(40);
 
 beforeEach(() => {
@@ -42,7 +49,7 @@ afterEach(() => {
 });
 
 it("キャッシュを保存できなくても、取得したデッキはそのセッションで使える", async () => {
-  const snapshot = await refreshSnapshot(null);
+  const snapshot = await refreshCurrentSnapshot(null);
   expect(publishDeckCache).toHaveBeenCalled();
   expect(snapshot.decks.map((entry) => entry.deckId)).toEqual(["alpha"]);
   expect(snapshot.warnings[0]).toContain("保存容量が足りません");

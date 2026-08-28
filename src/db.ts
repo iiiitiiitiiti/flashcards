@@ -140,6 +140,25 @@ async function runAtomically(
   }
 }
 
+/**
+ * 読み取り専用トランザクションで値を集める。
+ *
+ * `tx.done` は idb がトランザクション生成時に作るので、途中で例外が出て `await tx.done` へ
+ * 辿り着けないと、中止時の AbortError が**未処理の rejection になる**（`runAtomically` と同じ理屈。
+ * 2026-08-28 に注入試験で確認）。最初から掴んでおき、失敗時も回収してから投げ直す。
+ */
+async function readAtomically<T>(tx: { done: Promise<void> }, collect: () => Promise<T>): Promise<T> {
+  const done = tx.done;
+  try {
+    const value = await collect();
+    await done;
+    return value;
+  } catch (error) {
+    await Promise.allSettled([done]);
+    throw error;
+  }
+}
+
 /** 評価の保存。進捗とログを同一トランザクションで書き込む */
 export async function saveReview(record: ProgressRecord, log: ReviewLogEntry): Promise<void> {
   const db = await getDb();
@@ -297,22 +316,29 @@ export async function undoReview(
  *
  * 何度呼んでも同じ結果になる（消えていれば何もしない）ので、失敗したら再試行してよい。
  */
-export async function deleteDeckLocalData(deckId: string): Promise<{ progress: number; notes: number; hidden: number; reviews: number }> {
+export async function deleteDeckLocalData(deckId: string): Promise<{ progress: number; notes: number; hidden: number; reviews: number; drafts: number }> {
   const db = await getDb();
 
-  const readTx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog"]);
-  const progressKeys = await readTx.objectStore("cardProgress").index("byDeck").getAllKeys(deckId);
-  const noteKeys = await readTx.objectStore("cardNotes").index("byDeck").getAllKeys(deckId);
-  const hiddenKeys = await readTx.objectStore("hiddenCards").index("byDeck").getAllKeys(deckId);
-  const reviewIds: string[] = [];
-  let cursor = await readTx.objectStore("reviewLog").openCursor();
-  while (cursor) {
-    if (cursor.value.deckId === deckId) reviewIds.push(cursor.value.reviewId);
-    cursor = await cursor.continue();
-  }
-  await readTx.done;
+  const readTx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog", "importDrafts"]);
+  const { progressKeys, noteKeys, hiddenKeys, reviewIds, draftIds } = await readAtomically(readTx, async () => {
+    const progressKeys = await readTx.objectStore("cardProgress").index("byDeck").getAllKeys(deckId);
+    const noteKeys = await readTx.objectStore("cardNotes").index("byDeck").getAllKeys(deckId);
+    const hiddenKeys = await readTx.objectStore("hiddenCards").index("byDeck").getAllKeys(deckId);
+    const reviewIds: string[] = [];
+    let cursor = await readTx.objectStore("reviewLog").openCursor();
+    while (cursor) {
+      if (cursor.value.deckId === deckId) reviewIds.push(cursor.value.reviewId);
+      cursor = await cursor.continue();
+    }
+    // importDrafts も deckId を持つ。消し残すと、同じ id で作り直したときに
+    // 前回の CSV インポートが「未完了」として蘇る（keyPath は draftId なので走査で拾う）
+    const draftIds = (await readTx.objectStore("importDrafts").getAll())
+      .filter((draft) => draft.deckId === deckId)
+      .map((draft) => draft.draftId);
+    return { progressKeys, noteKeys, hiddenKeys, reviewIds, draftIds };
+  });
 
-  const tx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog", "deckCache"], "readwrite");
+  const tx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog", "deckCache", "importDrafts"], "readwrite");
   await runAtomically(tx, (add) => {
     const progress = tx.objectStore("cardProgress");
     for (const key of progressKeys) add(progress.delete(key));
@@ -322,8 +348,16 @@ export async function deleteDeckLocalData(deckId: string): Promise<{ progress: n
     for (const key of hiddenKeys) add(hidden.delete(key));
     const log = tx.objectStore("reviewLog");
     for (const reviewId of reviewIds) add(log.delete(reviewId));
+    const drafts = tx.objectStore("importDrafts");
+    for (const draftId of draftIds) add(drafts.delete(draftId));
     add(tx.objectStore("deckCache").delete(deckId));
   });
 
-  return { progress: progressKeys.length, notes: noteKeys.length, hidden: hiddenKeys.length, reviews: reviewIds.length };
+  return {
+    progress: progressKeys.length,
+    notes: noteKeys.length,
+    hidden: hiddenKeys.length,
+    reviews: reviewIds.length,
+    drafts: draftIds.length,
+  };
 }
