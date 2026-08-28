@@ -287,3 +287,40 @@ export function saveStudyTag(deckId: string, tag: string | null): void {
     // 保存できなくても、そのセッションの絞り込みは効く
   }
 }
+
+const PENDING_DECK_DELETIONS_KEY = "flashcards:pending-deck-deletions";
+
+/**
+ * GitHub からは消したが、端末の後片付けが済んでいないデッキ id。
+ *
+ * 途中でアプリが落ちると孤児レコードが残り、同じ id で作り直したときに
+ * 古い進捗が新しいデッキへ再接続されてしまう（2026-08-28 Codex 指摘）。起動時にやり直すための印。
+ */
+export function loadPendingDeckDeletions(): string[] {
+  try {
+    const raw = localStorage.getItem(PENDING_DECK_DELETIONS_KEY);
+    if (raw === null) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingDeckDeletions(deckIds: string[]): void {
+  try {
+    if (deckIds.length === 0) localStorage.removeItem(PENDING_DECK_DELETIONS_KEY);
+    else localStorage.setItem(PENDING_DECK_DELETIONS_KEY, JSON.stringify(deckIds));
+  } catch {
+    // 保存できなくても削除自体は続行する（次回の再開ができなくなるだけ）
+  }
+}
+
+export function addPendingDeckDeletion(deckId: string): void {
+  const current = loadPendingDeckDeletions();
+  if (!current.includes(deckId)) savePendingDeckDeletions([...current, deckId]);
+}
+
+export function removePendingDeckDeletion(deckId: string): void {
+  savePendingDeckDeletions(loadPendingDeckDeletions().filter((id) => id !== deckId));
+}

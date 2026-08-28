@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
-import { deleteDeckLocalData, deleteImportDraft, deleteProgress, deleteProgressByDeck, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
+import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
 import { appendCards, parseTags, upsertCard } from "./deckedit";
+import { cleanUpDeletedDeck } from "./deckcleanup";
 import { downloadBackup } from "./backup";
 import { ModalSheet } from "./ModalSheet";
 import { buildPageItems, CARDS_PER_PAGE, clampPage } from "./pagination";
 import { deleteDeck, writeDeck } from "./github";
-import { loadToken } from "./storage";
+import { addPendingDeckDeletion, loadToken } from "./storage";
 import type { ImportDraft, ProgressRecord } from "./types";
 
 const FSRS_STATE_REVIEW = 2;
@@ -48,6 +49,7 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteName, setDeleteName] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const canEdit = loadToken() !== "";
 
@@ -283,12 +285,16 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
 
   /** 削除の前に、この端末の学習記録を書き出しておけるようにする */
   async function handleBackupBeforeDelete() {
+    if (backingUp) return;
+    setBackingUp(true);
     setDeleteMessage(null);
     try {
       const { progressCount, logCount, noteCount } = await downloadBackup();
       setDeleteMessage(`進捗 ${progressCount} 件・ログ ${logCount} 件・メモ ${noteCount} 件を書き出しました。`);
     } catch (error) {
       setDeleteMessage(error instanceof Error ? error.message : "書き出しに失敗しました。");
+    } finally {
+      setBackingUp(false);
     }
   }
 
@@ -299,7 +305,9 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
    * もう一度押せば後片付けだけをやり直せる。
    */
   async function handleDeleteDeck() {
-    if (deleting || deleteName.trim() !== deck.name) return;
+    // 書き出し中に消すと、ストアごとに別トランザクションで読む exportBackup が
+    // 「進捗はあるがログは無い」半端なバックアップを作りうる
+    if (deleting || backingUp || deleteName.trim() !== deck.name) return;
     setDeleting(true);
     setDeleteMessage(null);
     try {
@@ -311,8 +319,10 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
       setDeleting(false);
       return;
     }
+    // GitHub からは消えた。ここから先で落ちても、起動時に後片付けを再開できるよう印を残す
+    addPendingDeckDeletion(deck.id);
     try {
-      await deleteDeckLocalData(deck.id);
+      await cleanUpDeletedDeck(deck.id);
     } catch (error) {
       setDeleteMessage(
         `GitHub からは削除しましたが、この端末のデータを消せませんでした: ${error instanceof Error ? error.message : "不明なエラー"} もう一度「削除する」を押すと、後片付けだけやり直せます。`,
@@ -501,8 +511,8 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
               このデッキは Excel から自動生成している可能性があります。その場合、次回の取り込みでカードだけ復活します（学習進捗は戻りません）。
             </p>
           )}
-          <button type="button" disabled={deleting} onClick={() => void handleBackupBeforeDelete()}>
-            先にバックアップを書き出す
+          <button type="button" disabled={deleting || backingUp} onClick={() => void handleBackupBeforeDelete()}>
+            {backingUp ? "書き出し中…" : "先にバックアップを書き出す"}
           </button>
           <label>
             確認のため、デッキ名「{deck.name}」を入力してください
@@ -520,7 +530,7 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
             <button
               type="button"
               className="danger"
-              disabled={deleting || deleteName.trim() !== deck.name}
+              disabled={deleting || backingUp || deleteName.trim() !== deck.name}
               onClick={() => void handleDeleteDeck()}
             >
               {deleting ? "削除中…" : "削除する"}

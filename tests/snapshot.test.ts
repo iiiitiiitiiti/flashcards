@@ -4,6 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { publishDeckCache, readDeckCache, resetDbForTest } from "../src/db";
 import { loadCachedSnapshot, refreshSnapshot } from "../src/snapshot";
 
+/** テスト用: 追い越されていない前提で結果を取り出す（null は想定外なので落とす） */
+async function refreshCurrentSnapshot(token: string | null) {
+  const snapshot = await refreshSnapshot(token);
+  if (snapshot === null) throw new Error("refreshSnapshot が追い越されました（テストでは起こらないはず）");
+  return snapshot;
+}
+
+
 const COMMIT_A = "a".repeat(40);
 const COMMIT_B = "b".repeat(40);
 const TREE_SHA = "t".repeat(40);
@@ -85,7 +93,7 @@ afterEach(() => {
 describe("refreshSnapshot", () => {
   it("全デッキを取得・検証してキャッシュへ公開する", async () => {
     installFetch({ deckPaths: ["decks/alpha.json", "decks/beta.json"], rawBodies: { alpha: deckJson("alpha"), beta: deckJson("beta") } });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(snapshot.offline).toBe(false);
     expect(snapshot.warnings).toEqual([]);
     expect(snapshot.decks.map((entry) => entry.deckId).sort()).toEqual(["alpha", "beta"]);
@@ -94,17 +102,17 @@ describe("refreshSnapshot", () => {
 
   it("一覧取得に失敗したら既存キャッシュを offline で返す", async () => {
     installFetch({ deckPaths: ["decks/alpha.json"], rawBodies: { alpha: deckJson("alpha") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
 
     installFetch({ listingError: true });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(snapshot.offline).toBe(true);
     expect(snapshot.decks.map((entry) => entry.deckId)).toEqual(["alpha"]);
   });
 
   it("不正になったデッキは旧キャッシュを残し、警告を付ける", async () => {
     installFetch({ deckPaths: ["decks/alpha.json"], rawBodies: { alpha: deckJson("alpha", "旧") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
 
     // 中身が変わった（＝取り直す）が、そのファイルが壊れている
     installFetch({
@@ -113,7 +121,7 @@ describe("refreshSnapshot", () => {
       blobShas: { alpha: "blob-alpha-broken" },
       rawBodies: { alpha: "{ broken json" },
     });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(snapshot.offline).toBe(false);
     expect(snapshot.warnings).toHaveLength(1);
     expect(snapshot.warnings[0]).toContain("alpha");
@@ -124,17 +132,17 @@ describe("refreshSnapshot", () => {
 
   it("キャッシュのない不正デッキは警告のみで除外する", async () => {
     installFetch({ deckPaths: ["decks/alpha.json"], rawBodies: { alpha: JSON.stringify({ schemaVersion: 1, id: "other", name: "x", cards: [] }) } });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(snapshot.decks).toHaveLength(0);
     expect(snapshot.warnings[0]).toContain("alpha");
   });
 
   it("リポジトリから消えたデッキはキャッシュからも消す", async () => {
     installFetch({ deckPaths: ["decks/alpha.json", "decks/beta.json"], rawBodies: { alpha: deckJson("alpha"), beta: deckJson("beta") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
 
     installFetch({ commitSha: COMMIT_B, deckPaths: ["decks/alpha.json"], rawBodies: { alpha: deckJson("alpha") } });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(snapshot.decks.map((entry) => entry.deckId)).toEqual(["alpha"]);
     expect(await readDeckCache()).toHaveLength(1);
     // 中身が変わっていない alpha は取り直していない
@@ -143,7 +151,7 @@ describe("refreshSnapshot", () => {
 
   it("一部デッキの通信失敗では更新全体を中止し、旧キャッシュを保つ", async () => {
     installFetch({ deckPaths: ["decks/alpha.json", "decks/beta.json"], rawBodies: { alpha: deckJson("alpha", "旧"), beta: deckJson("beta") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
 
     installFetch({
       commitSha: COMMIT_B,
@@ -151,7 +159,7 @@ describe("refreshSnapshot", () => {
       blobShas: { alpha: "blob-alpha-2", beta: "blob-beta-2" },
       rawBodies: { alpha: deckJson("alpha", "新"), beta: new TypeError("network down") },
     });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(snapshot.offline).toBe(true);
     const cache = await readDeckCache();
     expect(cache).toHaveLength(2);
@@ -170,12 +178,12 @@ describe("loadCachedSnapshot", () => {
 describe("refreshSnapshot のキャッシュ利用（blob SHA 判定）", () => {
   it("中身が変わらなければ、別コミットでも取り直さない", async () => {
     installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(1);
 
     // コミットは進んだが decks/a.json は変わっていない
     installFetch({ commitSha: COMMIT_B, deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(0);
     expect(snapshot.decks).toHaveLength(1);
     expect(snapshot.decks[0].deck.cards[0].front).toBe("問");
@@ -188,7 +196,7 @@ describe("refreshSnapshot のキャッシュ利用（blob SHA 判定）", () => 
       deckPaths: ["decks/a.json", "decks/b.json"],
       rawBodies: { a: deckJson("a"), b: deckJson("b") },
     });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(2);
 
     installFetch({
@@ -197,7 +205,7 @@ describe("refreshSnapshot のキャッシュ利用（blob SHA 判定）", () => 
       blobShas: { b: "blob-b-updated" },
       rawBodies: { a: deckJson("a"), b: deckJson("b", "新しい問") },
     });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(1);
     expect(snapshot.decks.find((entry) => entry.deckId === "a")?.deck.cards[0].front).toBe("問");
     expect(snapshot.decks.find((entry) => entry.deckId === "b")?.deck.cards[0].front).toBe("新しい問");
@@ -205,7 +213,7 @@ describe("refreshSnapshot のキャッシュ利用（blob SHA 判定）", () => 
 
   it("blob SHA を持たない旧キャッシュは一度だけ取り直す", async () => {
     installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
     // 旧バージョンが書いたキャッシュを再現する
     await publishDeckCache(
       (await readDeckCache()).map(({ blobSha: _blobSha, ...rest }) => rest),
@@ -214,21 +222,21 @@ describe("refreshSnapshot のキャッシュ利用（blob SHA 判定）", () => 
     expect((await readDeckCache())[0].blobSha).toBeUndefined();
 
     installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(1);
     expect((await readDeckCache())[0].blobSha).toBe("blob-a");
 
     installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(0);
   });
 
   it("一覧の sha が欠けていたら、キャッシュを消さずオフライン扱いにする", async () => {
     installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
 
     installFetch({ deckPaths: ["decks/a.json"], dropShas: true, rawBodies: { a: deckJson("a") } });
-    const snapshot = await refreshSnapshot(null);
+    const snapshot = await refreshCurrentSnapshot(null);
     expect(snapshot.offline).toBe(true);
     expect(snapshot.decks.map((entry) => entry.deckId)).toEqual(["a"]);
     expect(await readDeckCache()).toHaveLength(1);
@@ -236,18 +244,18 @@ describe("refreshSnapshot のキャッシュ利用（blob SHA 判定）", () => 
 
   it("デッキが増えたら新しいものだけ取得し、消えたらキャッシュから外す", async () => {
     installFetch({ deckPaths: ["decks/a.json"], rawBodies: { a: deckJson("a") } });
-    await refreshSnapshot(null);
+    await refreshCurrentSnapshot(null);
 
     installFetch({
       deckPaths: ["decks/a.json", "decks/c.json"],
       rawBodies: { a: deckJson("a"), c: deckJson("c") },
     });
-    let snapshot = await refreshSnapshot(null);
+    let snapshot = await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(1);
     expect(snapshot.decks.map((entry) => entry.deckId)).toEqual(["a", "c"]);
 
     installFetch({ deckPaths: ["decks/c.json"], rawBodies: { c: deckJson("c") } });
-    snapshot = await refreshSnapshot(null);
+    snapshot = await refreshCurrentSnapshot(null);
     expect(rawFetchCount()).toBe(0);
     expect(snapshot.decks.map((entry) => entry.deckId)).toEqual(["c"]);
   });

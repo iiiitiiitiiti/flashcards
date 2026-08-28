@@ -11,13 +11,37 @@ function toSnapshot(entries: DeckCacheEntry[], warnings: string[], offline: bool
 }
 
 /**
- * デッキスナップショットを更新する。
+ * 走っている取得の世代。新しい取得が始まるか `invalidateSnapshotFetches()` が呼ばれると上がる。
+ *
+ * デッキを削除・作成した直後に、**それより前から走っていた取得が後から着地して**
+ * 古い一覧でキャッシュを上書きする競合があった（2026-08-28 Codex 指摘）。
+ * 削除したデッキが進捗だけ失った「新規デッキ」として復活してしまう。
+ */
+let snapshotGeneration = 0;
+
+/** 進行中の取得を無効にする。デッキを削除・作成した直後に呼ぶ */
+export function invalidateSnapshotFetches(): void {
+  snapshotGeneration += 1;
+}
+
+/**
+ * デッキスナップショットを更新する。追い越されていたら **null** を返す（呼び出し側は画面を更新しない）。
+ */
+export async function refreshSnapshot(token: string | null): Promise<DeckSnapshot | null> {
+  const generation = ++snapshotGeneration;
+  const isCurrent = () => generation === snapshotGeneration;
+  const result = await runRefreshSnapshot(token, isCurrent);
+  return isCurrent() ? result : null;
+}
+
+/**
+ * 取得の本体。
  * - コミット SHA を1つに固定して全デッキを取得し、全件検証後に一括でキャッシュへ公開する
  * - キャッシュ済みで blob SHA が同じデッキは再取得しない（中身が変わったものだけ取る）
  * - ネットワーク不通・一覧取得失敗時は既存キャッシュを返す（offline: true）
  * - 個別デッキが不正だった場合はそのデッキだけ旧キャッシュを残し、警告を付ける
  */
-export async function refreshSnapshot(token: string | null): Promise<DeckSnapshot> {
+async function runRefreshSnapshot(token: string | null, isCurrent: () => boolean): Promise<DeckSnapshot> {
   const cached = await readDeckCache();
   let listing;
   try {
@@ -84,6 +108,10 @@ export async function refreshSnapshot(token: string | null): Promise<DeckSnapsho
     }
   }
 
+  if (!isCurrent()) {
+    // 削除・作成に追い越された。古い一覧でキャッシュを上書きしない（呼び出し側もこの結果を捨てる）
+    return toSnapshot(entries, warnings, false);
+  }
   try {
     await publishDeckCache(entries, retainDeckIds);
   } catch (error) {

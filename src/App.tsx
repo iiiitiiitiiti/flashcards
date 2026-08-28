@@ -7,7 +7,8 @@ import { ModalSheet } from "./ModalSheet";
 import { DeckDetailView } from "./DeckDetailView";
 import { StatsView } from "./StatsView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
-import { loadCachedSnapshot, refreshSnapshot } from "./snapshot";
+import { invalidateSnapshotFetches, loadCachedSnapshot, refreshSnapshot } from "./snapshot";
+import { resumePendingDeckDeletions } from "./deckcleanup";
 import { buildStudyQueue, countIntroducedToday, formatPercent, retentionPercent } from "./srs";
 import {
   loadDeckSort,
@@ -235,7 +236,9 @@ export function App() {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await applySnapshot(await refreshSnapshot(loadToken() || null));
+      const next = await refreshSnapshot(loadToken() || null);
+      // null は「新しい取得や削除に追い越された」印。古い一覧で画面を戻さない
+      if (next !== null) await applySnapshot(next);
     } finally {
       setRefreshing(false);
     }
@@ -246,6 +249,8 @@ export function App() {
     void requestPersistentStorage();
     // 古い評価ログを間引く（失敗しても学習には影響しないので握りつぶす）
     void pruneReviewLog().catch(() => undefined);
+    // 前回の削除が後片付けの途中で終わっていたら、ここでやり直す
+    void resumePendingDeckDeletions();
     // アニメーション設定を反映（OS の視差効果設定は参照しない）
     document.documentElement.dataset.motion = loadMotionPreference();
   }, []);
@@ -346,6 +351,8 @@ export function App() {
         ...(description !== "" ? { description } : {}),
         cards: [],
       });
+      // 作成前から走っている取得が後から着地して、作ったデッキをキャッシュから消さないようにする
+      invalidateSnapshotFetches();
       // blobSha は分からないので入れない（次の更新で必ず取り直される）
       const entry: DeckCacheEntry = { deckId: id, deck: created, commitSha: "", fetchedAt: Date.now() };
       // キャッシュに入らなくても GitHub 側には作れているので、失敗しても続行する
@@ -479,8 +486,9 @@ export function App() {
               void applySnapshot(updated);
             }}
             onDeckDeleted={() => {
-              // まず手元から外してホームへ戻り、そのうえで GitHub の現状で組み直す。
-              // 削除前に始まっていた更新が後から着地してキャッシュを復活させても、これで上書きされる
+              // 削除前から走っている取得を無効にする。これをしないと、古い一覧が後から着地して
+              // 消したデッキをキャッシュごと復活させる（進捗だけ失った「新規デッキ」として出る）
+              invalidateSnapshotFetches();
               void applySnapshot({
                 ...snapshot,
                 decks: snapshot.decks.filter((candidate) => candidate.deckId !== entry.deckId),

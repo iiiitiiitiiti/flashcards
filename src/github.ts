@@ -260,9 +260,33 @@ export function deleteDeck(deckId: string, token: string): Promise<void> {
   return operation;
 }
 
+/**
+ * 404 を「すでに消えている」と断じてよいか確かめる。
+ *
+ * GitHub は**権限が足りないときも 404 を返す**（存在を漏らさないため）。確かめずに削除済みと
+ * 決めつけると、GitHub にデッキが残ったまま端末の進捗だけ消えて戻せなくなる。
+ * リポジトリ自体が見えて書き込めるなら、無いのはファイルの方だと言える。
+ */
+async function assertDeckReallyMissing(deckId: string, token: string): Promise<void> {
+  let access: ConnectionTestResult;
+  try {
+    access = await testConnection(token);
+  } catch (error) {
+    throw new Error(
+      `デッキ「${deckId}」が見つかりませんでしたが、すでに削除済みかを確認できませんでした: ${error instanceof Error ? error.message : "不明なエラー"}`,
+    );
+  }
+  if (access.writeAccess === "unavailable") {
+    throw new Error(`デッキ「${deckId}」が見つかりませんでした。トークンに書き込み権限がないため、削除済みかを判断できません。`);
+  }
+}
+
 async function deleteDeckOnce(deckId: string, token: string): Promise<void> {
   const found = await apiRequest<ContentsResponse>(`${deckContentsPath(deckId)}?ref=${BRANCH}`, token);
-  if (found.status === 404) return;
+  if (found.status === 404) {
+    await assertDeckReallyMissing(deckId, token);
+    return;
+  }
   if (found.status !== 200 || !found.data.sha) {
     throw new Error(describeAuthFailure(found.status) ?? `デッキ「${deckId}」の最新版を取得できませんでした (${found.status})`);
   }
@@ -270,8 +294,12 @@ async function deleteDeckOnce(deckId: string, token: string): Promise<void> {
     method: "DELETE",
     body: JSON.stringify({ message: `deck(${deckId}): delete`, sha: found.data.sha, branch: BRANCH }),
   });
-  // 取得と削除の間に他から消されていても、結果は同じなので成功扱いにする
-  if (response.status === 200 || response.status === 404) return;
+  if (response.status === 200) return;
+  // 取得と削除の間に他から消されていても結果は同じだが、権限起因の 404 と区別してから返す
+  if (response.status === 404) {
+    await assertDeckReallyMissing(deckId, token);
+    return;
+  }
   const auth = describeAuthFailure(response.status);
   if (auth) throw new Error(auth);
   throw new Error(`デッキの削除に失敗しました (${response.status}): ${response.data.message ?? "不明なエラー"}`);
