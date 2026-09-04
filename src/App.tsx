@@ -9,6 +9,7 @@ import { StatsView } from "./StatsView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
 import { invalidateSnapshotFetches, loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { resumePendingDeckDeletions } from "./deckcleanup";
+import { moveTargets } from "./deckedit";
 import { buildStudyQueue, countIntroducedToday, formatPercent, retentionPercent } from "./srs";
 import {
   loadDeckSort,
@@ -229,6 +230,31 @@ export function App() {
     async (target: DeckSnapshot) => {
       setSnapshot(target);
       await updateStats(target);
+    },
+    [updateStats],
+  );
+
+  /**
+   * アプリから GitHub へ保存した結果でスナップショットとキャッシュを即時更新する（API 側の反映遅延を待たない）。
+   * カード一覧・学習画面の両方から呼ぶ。移動では移動先・元の2デッキが一度に来るので、まとめて1回で差し替える
+   * （1デッキずつ古い snapshot を元に差し替えると、後の更新が前の更新を打ち消す）
+   */
+  const applyDeckUpdates = useCallback(
+    (...nextDecks: Deck[]) => {
+      setSnapshot((current) => {
+        if (!current) return current;
+        const byId = new Map(nextDecks.map((deck) => [deck.id, deck]));
+        const fetchedAt = Date.now();
+        const decks = current.decks.map((candidate) => {
+          const nextDeck = byId.get(candidate.deckId);
+          if (!nextDeck) return candidate;
+          void upsertDeckCacheEntry({ ...candidate, deck: nextDeck, fetchedAt });
+          return { ...candidate, deck: nextDeck, fetchedAt };
+        });
+        const updated = { ...current, decks };
+        void updateStats(updated);
+        return updated;
+      });
     },
     [updateStats],
   );
@@ -474,17 +500,8 @@ export function App() {
               // デッキ詳細での進捗リセットをホームの件数・ゲージへ反映する
               void updateStats(snapshot);
             }}
-            onDeckUpdated={(nextDeck) => {
-              // GitHub API 側の反映遅延を待たず、保存結果でスナップショットとキャッシュを即時更新する
-              const updated: DeckSnapshot = {
-                ...snapshot,
-                decks: snapshot.decks.map((candidate) =>
-                  candidate.deckId === entry.deckId ? { ...candidate, deck: nextDeck, fetchedAt: Date.now() } : candidate,
-                ),
-              };
-              void upsertDeckCacheEntry({ ...entry, deck: nextDeck, fetchedAt: Date.now() });
-              void applySnapshot(updated);
-            }}
+            onDeckUpdated={applyDeckUpdates}
+            moveTargets={moveTargets(entry.deck, snapshot.decks.map((candidate) => candidate.deck))}
             onDeckDeleted={() => {
               // 削除前から走っている取得を無効にする。これをしないと、古い一覧が後から着地して
               // 消したデッキをキャッシュごと復活させる（進捗だけ失った「新規デッキ」として出る）
@@ -518,17 +535,8 @@ export function App() {
             usedNewCardsToday={usedNewCardsToday}
             initialNotes={view.notes}
             canEditCards={loadToken() !== ""}
-            onDeckUpdated={(nextDeck) => {
-              // カード一覧と同じく、保存結果でスナップショットとキャッシュを即時更新する
-              const updated: DeckSnapshot = {
-                ...snapshot,
-                decks: snapshot.decks.map((candidate) =>
-                  candidate.deckId === entry.deckId ? { ...candidate, deck: nextDeck, fetchedAt: Date.now() } : candidate,
-                ),
-              };
-              void upsertDeckCacheEntry({ ...entry, deck: nextDeck, fetchedAt: Date.now() });
-              void applySnapshot(updated);
-            }}
+            onDeckUpdated={applyDeckUpdates}
+            moveTargets={moveTargets(entry.deck, snapshot.decks.map((candidate) => candidate.deck))}
             onHide={(cardId) => {
               // 統計とホームの枚数を作り直す。学習中の表示はセッション側が更新済み
               setHidden((previous) => {

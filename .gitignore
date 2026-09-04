@@ -3,3 +3,6 @@ dist/
 dev-dist/
 *.tsbuildinfo
 .DS_Store
+# decks:sync が xlsx へ書き戻すべきアプリ側変更（実行ごとに作り直す）
+writeback-pending.json
+scripts/__pycache__/

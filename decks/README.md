@@ -49,8 +49,8 @@ Claude・人間ともに、デッキを追加・編集するときは必ずこ�
 ## クイズ.xlsx からの一括生成（quiz-* デッキ）
 
 `quiz-rikei` 〜 `quiz-sonota` の16デッキは、Google Drive の `クイズ/クイズ.xlsx`「ノンジャンルクイズ」シートから
-`scripts/import-quiz-xlsx.py` で生成している。**これらのファイルは手で編集しない**（次の生成で上書きされる）。
-問題を直すときは xlsx を直し、再生成する。
+`scripts/import-quiz-xlsx.py` で生成している。**これらのファイルは手で編集しない**。
+問題を直すときは xlsx を直して再生成するか、**アプリから直す**（下記「アプリからの編集と再生成」）。
 
 ```bash
 pip3 install openpyxl          # 初回のみ
@@ -58,7 +58,8 @@ npm run decks:sync             # 生成 → 検証 → 差分表示 → commit�
 npm run decks:sync -- --dry-run    # commit せず差分だけ見る
 ```
 
-`decks:sync` は**カード id が消えていたら一覧を出して止まる**（`scripts/sync-decks.mjs`）。
+`decks:sync` は次の順で動く（`scripts/sync-decks.mjs`）: 生成 → アプリ側の変更をマージ → 検証 → HEAD との差分 → commit・push。
+**カード id が消えていたら一覧を出して止まる**。
 消えた id の学習進捗は孤児になり復旧できないため、Excel の行削除・Q列「No」の書き換えを事故として扱う。
 意図した削除なら `--allow-removals` を付ける。生成をやり直したいときは `git checkout -- decks` で戻せる。
 
@@ -74,4 +75,31 @@ npm run validate:decks
 - Q列が数値でない行（60件）は問題文の SHA-1 先頭10桁に `h` を付けた id にする。**該当行の問題文を書き換えると id が変わり、その問題の学習進捗は失われる**
 - 問題の大ジャンルを xlsx 側で変更すると、そのカードは別デッキへ移動する。進捗は (デッキ id, カード id) で持つため、**ジャンルを変えると学習進捗は引き継がれない**
 - **大ジャンルの問題がすべて無くなっても、そのデッキの JSON は残る**（importer は書き込むだけで削除しない）。デッキごと廃止するときは手でファイルを消す
-- 1MB を超えるデッキ（quiz-koumin / quiz-rikei / quiz-seikatsu）は、GitHub Contents API の制限でアプリ内の「カード追加」「CSV取込」が使えない。xlsx 側で管理すること
+- 1MB を超えるデッキ（quiz-koumin / quiz-rikei / quiz-seikatsu）は、GitHub Contents API の制限でアプリ内の「カード追加」「CSV取込」「編集」「移動」が使えない。xlsx 側で管理すること
+
+## アプリからの編集と再生成（2026-09-04）
+
+アプリ（iPhone）でカードの本文・タグ・所属デッキを直すと GitHub の `decks/*.json` にだけ入る。再生成でそれを消さないよう、
+`decks:sync` は **3-way マージ**を行う（`scripts/merge-decks.mjs`、`docs/decisions/008`）。
+
+- base = 前回の再生成コミット（件名「chore: クイズ.xlsx からデッキを再生成」。**この件名は変えない**）、ours = HEAD、theirs = xlsx から生成した結果
+- theirs のカードが base のままなら ours（アプリの変更）を当てる。既に ours と同じなら何もしない。どちらとも違えば**衝突**として止まり、一覧が出る
+  - `npm run decks:sync -- --on-conflict=xlsx` で xlsx 側を残して続行（推奨）、`--on-conflict=app` でアプリ側を通す
+- タグは順序を無視して比べる。`quiz-sonota` は大ジャンル名がタグに入る特殊形なのでマージ対象外
+- アプリで追加したカード（xlsx に行が無い）はアプリ側のデッキに残るが、xlsx へ行を足して No を振るまで毎回一覧に出る
+
+マージで適用した変更は **xlsx へは自動では入らない**。`writeback-pending.json`（git 管理外）に出るので、次のどちらかで反映する。
+
+```bash
+npm run decks:sync -- --writeback          # xlwings で クイズ.xlsx へ書き戻す（Excel のある PC で。ブックは閉じておく）
+# または writeback-pending.json を見て xlsx を手で直す
+```
+
+書き戻し（`scripts/writeback-quiz-xlsx.py`）は行を「No」列で特定し、現在値が前回生成時の値であることを確かめてから書く。
+タグは 小ジャンル（I列）・難易度（D列）・出題済み（C列 `◯`）へ分解する。分解できない行・xlsx 側も変わっている行は書かずに一覧へ出す。
+反映しなくても、次回の sync で theirs が ours と同じになった時点で一覧から消える。
+
+アプリ側の制約（xlsx の列へ戻せる形に保つため）:
+
+- 生成デッキでは**新しいタグを作れない**。既存タグから選ぶ。保存時に「小ジャンル系のタグはちょうど1つ・★は1つまで」を検査する
+- カードの移動先は**同じ群**（生成デッキ同士）に限る。移動では移動先の既存タグから小ジャンルを選び直す。学習進捗・メモ・非表示も一緒に移る

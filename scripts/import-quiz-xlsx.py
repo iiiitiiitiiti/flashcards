@@ -26,36 +26,11 @@ DEFAULT_XLSX = (
     / "Library/CloudStorage/GoogleDrive-2190agiatotomijuf@gmail.com"
     / "マイドライブ/クイズ/クイズ.xlsx"
 )
-SHEET = "ノンジャンルクイズ"
 DECKS_DIR = Path(__file__).resolve().parent.parent / "decks"
 
-# 列はヘッダー名で探す（2026-09-04）。以前は固定位置（Q列 = 16）で読んでいたが、
-# xlsx に列が挿入されて「No」が U 列へ動き、固定位置のままだと全カードが h 付きの
-# ハッシュ id になって学習進捗が全部孤児になるところだった。
-# 値は「ヘッダー名, 前方一致か」。問題文の見出しは「問題文（問題数：29772）」のように件数を含む
-COLUMN_HEADERS = {
-    "shutsudai": ("出題", False),
-    "difficulty": ("難易度", False),
-    "question": ("問題文", True),
-    "answer": ("解答", False),
-    "note": ("別解･正誤判定基準･補足", False),
-    "genre": ("大ジャンル", False),
-    "subgenre": ("小ジャンル", False),
-    # 静的な通し番号。A列の「No.」（ピリオド付き・=ROW()-1 の数式）とは別物
-    "serial": ("No", False),
-}
-
-
-def locate_columns(header: tuple) -> dict[str, int]:
-    """ヘッダー行から各列の位置（0 始まり）を返す。見つからない・複数あるなら止める"""
-    names = [text(cell) for cell in header]
-    found: dict[str, int] = {}
-    for key, (name, prefix) in COLUMN_HEADERS.items():
-        hits = [i for i, n in enumerate(names) if (n.startswith(name) if prefix else n == name)]
-        if len(hits) != 1:
-            raise SystemExit(f"ヘッダー「{name}」が {len(hits)} 列見つかりました（1列でなければなりません）: {names}")
-        found[key] = hits[0]
-    return found
+# 列はヘッダー名で探す（scripts/quizxlsx.py。書き戻し側と共有）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from quizxlsx import SHEET, locate_columns, text  # noqa: E402
 
 # 大ジャンル → デッキ id。**一度決めたら変更しない**（ファイル名 = 進捗のキー）
 GENRE_DECKS: dict[str, tuple[str, str]] = {
@@ -78,10 +53,6 @@ GENRE_DECKS: dict[str, tuple[str, str]] = {
 FALLBACK_DECK = ("quiz-sonota", "クイズ: その他")
 
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-
-
-def text(value) -> str:
-    return "" if value is None else str(value).strip()
 
 
 def card_id(serial, question: str) -> str:

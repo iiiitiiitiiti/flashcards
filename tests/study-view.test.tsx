@@ -13,9 +13,11 @@ import type { Deck } from "../src/deck";
 
 /** GitHub への書き込みは差し替える。返り値は mutate を当てた結果にして本物と同じ形にする */
 const writeDeckMock = vi.fn();
+const moveCardMock = vi.fn();
 vi.mock("../src/github", () => ({
   writeDeck: (deckId: string, _token: string, _message: string, mutate: (deck: Deck) => Deck) =>
     writeDeckMock(deckId, mutate),
+  moveCardBetweenDecks: (fromDeckId: string, toDeckId: string, _token: string, card: unknown) => moveCardMock(fromDeckId, toDeckId, card),
 }));
 import { readAllProgress, readAllReviewLog, readCardNotes, resetDbForTest } from "../src/db";
 import { rate } from "../src/srs";
@@ -48,7 +50,7 @@ function renderStudy(overrides: Partial<Parameters<typeof StudyView>[0]> = {}) {
       initialNotes={new Map()}
       canEditCards
       onHide={(cardId) => hidden.push(cardId)}
-      onDeckUpdated={(next) => updatedDecks.push(next)}
+      onDeckUpdated={(...next) => updatedDecks.push(...next)}
       onClose={(restart) => closed.push(restart)}
       {...overrides}
     />,
@@ -410,8 +412,9 @@ describe("学習中のカード編集", () => {
     expect((screen.getByLabelText(/表面/) as HTMLTextAreaElement).value).toBe("日本の首都は");
     expect((screen.getByLabelText(/裏面/) as HTMLTextAreaElement).value).toBe("東京");
     expect((screen.getByLabelText(/補足メモ/) as HTMLTextAreaElement).value).toBe("補足");
-    // タグは入力欄の書式（; 区切り）へ戻す
-    expect((screen.getByLabelText(/タグ/) as HTMLInputElement).value).toBe("地理; 首都");
+    // タグは選択中のチップとして出る
+    expect(screen.getByRole("button", { name: "タグ「地理」を外す" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "タグ「首都」を外す" })).toBeTruthy();
   });
 
   it("表面が空なら保存させない", async () => {
@@ -430,7 +433,11 @@ describe("学習中のカード編集", () => {
     fireEvent.click(editButton() as HTMLButtonElement);
     await screen.findByText("カードを編集");
     fireEvent.change(screen.getByLabelText(/表面/), { target: { value: "日本の首都はどこ" } });
-    fireEvent.change(screen.getByLabelText(/タグ/), { target: { value: "地理, 首都" } });
+    // 手書きデッキなので新しいタグを作れる（明示のボタンを押したときだけ）
+    fireEvent.change(screen.getByLabelText("タグを検索"), { target: { value: "地理" } });
+    fireEvent.click(screen.getByText(/“地理” を新しいタグとして追加/));
+    fireEvent.change(screen.getByLabelText("タグを検索"), { target: { value: "首都" } });
+    fireEvent.click(screen.getByText(/“首都” を新しいタグとして追加/));
     fireEvent.click(screen.getByText("GitHubへ保存"));
 
     await waitFor(() => expect(view.container.querySelector(".study-front")?.textContent).toBe("日本の首都はどこ"));
@@ -438,7 +445,6 @@ describe("学習中のカード編集", () => {
     await waitFor(() => expect(view.updatedDecks).toHaveLength(1));
     const saved = view.updatedDecks[0].cards.find((card) => card.id === "001");
     expect(saved?.front).toBe("日本の首都はどこ");
-    // 区切りは ; でも , でも受ける
     expect(saved?.tags).toEqual(["地理", "首都"]);
     // id は変えない（進捗のキーなので）
     expect(saved?.id).toBe("001");
@@ -453,6 +459,34 @@ describe("学習中のカード編集", () => {
 
     expect(await screen.findByText("書き込みが拒否されました (403)。")).toBeTruthy();
     expect(screen.getByText("カードを編集")).toBeTruthy();
+  });
+
+  it("別デッキへ移すと、キューから抜けて移動先・元の両方が親へ渡る", async () => {
+    const OTHER: Deck = { schemaVersion: 1, id: "deck2", name: "別のデッキ", cards: [{ id: "900", front: "既存", back: "答", tags: ["既存タグ"] }] };
+    moveCardMock.mockImplementation((fromDeckId: string, toDeckId: string, card: Deck["cards"][number]) =>
+      Promise.resolve({
+        to: { ...OTHER, cards: [...OTHER.cards, card] },
+        from: { ...DECK, cards: DECK.cards.filter((existing) => existing.id !== card.id) },
+      }),
+    );
+    const view = renderStudy({ moveTargets: [OTHER] });
+    fireEvent.click(editButton() as HTMLButtonElement);
+    await screen.findByText("カードを編集");
+    fireEvent.change(screen.getByLabelText("デッキ"), { target: { value: "deck2" } });
+    // 移動先のタグが候補になる
+    fireEvent.click(screen.getByRole("button", { name: /タグ「既存タグ」を付ける/ }));
+    fireEvent.click(screen.getByText("移動してGitHubへ保存"));
+
+    await waitFor(() => expect(moveCardMock).toHaveBeenCalledTimes(1));
+    expect(moveCardMock.mock.calls[0][0]).toBe("deck1");
+    expect(moveCardMock.mock.calls[0][1]).toBe("deck2");
+    expect(moveCardMock.mock.calls[0][2].tags).toEqual(["既存タグ"]);
+    // このデッキのカードではなくなったので、次のカードへ進む
+    await waitFor(() => expect(view.container.querySelector(".study-front")?.textContent).toBe("フランスの首都は"));
+    await waitFor(() => expect(view.updatedDecks).toHaveLength(2));
+    expect(view.updatedDecks.map((deck) => deck.id)).toEqual(["deck2", "deck1"]);
+    // 端末側の進捗の移送も走る（deck1 に進捗が無いので何も移らないが、失敗もしない）
+    expect(await readAllProgress()).toEqual([]);
   });
 
   it("早押しで答えを出す前は編集させない", () => {

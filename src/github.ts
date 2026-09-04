@@ -1,4 +1,5 @@
-import { validateDeck, type Deck } from "./deck";
+import { validateDeck, type Deck, type DeckCard } from "./deck";
+import { removeCard, upsertCard } from "./deckedit";
 
 const API_ROOT = "https://api.github.com";
 const RAW_ROOT = "https://raw.githubusercontent.com";
@@ -206,6 +207,19 @@ async function writeDeckWithRetry(deckId: string, token: string, message: string
     }
   }
   throw new Error("他の更新と競合し続けたため保存を中止しました。時間をおいて再試行してください。");
+}
+
+/**
+ * カードを別デッキへ移す。**先に移動先へ追加し、次に元から削除する。**
+ * 途中で落ちても「両方にある」状態で止まり、次の decks:sync が add として拾う（データは失われない）。
+ * 逆順だと「どこにも無い」状態が生まれる。id は変えない（進捗の鍵）。
+ * 端末側の進捗の移送は呼び出し側が `moveCardLocalData` で行う
+ */
+export async function moveCardBetweenDecks(fromDeckId: string, toDeckId: string, token: string, card: DeckCard): Promise<{ from: Deck; to: Deck }> {
+  if (fromDeckId === toDeckId) throw new Error("同じデッキへは移動できません。");
+  const to = await writeDeck(toDeckId, token, `deck(${toDeckId}): move card ${card.id} from ${fromDeckId}`, (latest) => upsertCard(latest, card));
+  const from = await writeDeck(fromDeckId, token, `deck(${fromDeckId}): move card ${card.id} to ${toDeckId}`, (latest) => removeCard(latest, card.id));
+  return { from, to };
 }
 
 /** 書き込み用のパス。デッキ id はそのままファイル名になる */
