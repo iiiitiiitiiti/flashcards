@@ -17,6 +17,8 @@ const decksDir = join(root, "decks");
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const allowRemovals = args.includes("--allow-removals");
+// Windows の python3 は Store のスタブ（終了コード 9009）なので python を使う
+const PYTHON = process.platform === "win32" ? "python" : "python3";
 
 /** 子プロセスを走らせ、失敗したらそこで止める（出力はそのまま流す） */
 function run(command, commandArgs, { capture = false } = {}) {
@@ -117,7 +119,7 @@ if (fetched.status !== 0) {
 const head = readDecksFromHead();
 
 console.log("== 1/4 クイズ.xlsx からデッキを生成 ==");
-run("python3", [join("scripts", "import-quiz-xlsx.py"), ...args.filter((arg) => !arg.startsWith("--"))]);
+run(PYTHON, [join("scripts", "import-quiz-xlsx.py"), ...args.filter((arg) => !arg.startsWith("--"))]);
 
 console.log("\n== 2/4 デッキを検証 ==");
 run("node", [join("scripts", "validate-decks.mjs")]);
