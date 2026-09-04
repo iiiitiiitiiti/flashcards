@@ -3,6 +3,8 @@ import type { Deck } from "../src/deck";
 import {
   retentionPercent,
   buildStudyQueue,
+  buildStudyItems,
+  progressKey,
   isWeakCard,
   countIntroducedToday,
   dayKey,
@@ -484,5 +486,67 @@ describe("苦手カード（isWeakCard / buildStudyQueue focus=weak）", () => {
     const queue = buildStudyQueue(deck(["a", "b"]), records, NOW);
     expect(queue.due).toEqual([]);
     expect(queue.fresh.map((card) => card.id)).toEqual(["b"]);
+  });
+});
+
+describe("buildStudyItems（複数デッキ）", () => {
+  function deck(id: string, cardIds: string[], tags: Record<string, string[]> = {}): Deck {
+    return { schemaVersion: 1, id, name: id, cards: cardIds.map((cardId) => ({ id: cardId, front: `Q${cardId}`, back: `A${cardId}`, tags: tags[cardId] })) };
+  }
+  const base = { newCardsPerDay: 10, tag: null, focus: "all" as const, weakSince: null, includeFresh: false };
+  const dueRecord = (deckId: string, cardId: string, dueAt: number) => record(cardId, { deckId }, { due: dueAt });
+
+  it("全デッキの期限切れを通しで期限順に並べ、新規は出さない", () => {
+    const records = [
+      dueRecord("a", "1", NOW.getTime() - 1000),
+      dueRecord("b", "1", NOW.getTime() - 5000),
+      dueRecord("a", "2", NOW.getTime() - 3000),
+      dueRecord("b", "2", NOW.getTime() + 60_000),
+    ];
+    const { items, freshHeldBack } = buildStudyItems([deck("a", ["1", "2", "3"]), deck("b", ["1", "2"])], records, NOW, base);
+    expect(items.map((item) => `${item.deckId}/${item.card.id}`)).toEqual(["b/1", "a/2", "a/1"]);
+    expect(items.every((item) => !item.isNew)).toBe(true);
+    expect(freshHeldBack).toBe(0);
+  });
+
+  it("同じ cardId が別デッキにあっても、それぞれのデッキの進捗で判定する", () => {
+    // a/1 は期限切れ、b/1 は期限前
+    const records = [dueRecord("a", "1", NOW.getTime() - 1000), dueRecord("b", "1", NOW.getTime() + 60_000)];
+    const { items } = buildStudyItems([deck("a", ["1"]), deck("b", ["1"])], records, NOW, base);
+    expect(items.map((item) => `${item.deckId}/${item.card.id}`)).toEqual(["a/1"]);
+  });
+
+  it("タグで絞れる（デッキをまたいで）", () => {
+    const records = [dueRecord("a", "1", NOW.getTime() - 1000), dueRecord("b", "1", NOW.getTime() - 2000)];
+    const decks = [deck("a", ["1"], { "1": ["★★★"] }), deck("b", ["1"], { "1": ["★☆☆"] })];
+    const { items } = buildStudyItems(decks, records, NOW, { ...base, tag: "★★★" });
+    expect(items.map((item) => item.deckId)).toEqual(["a"]);
+  });
+
+  it("1デッキで includeFresh なら buildStudyQueue と同じ並び（復習 → 新規）", () => {
+    const records = [dueRecord("a", "2", NOW.getTime() - 1000)];
+    const single = deck("a", ["1", "2", "3"]);
+    const { items, freshHeldBack } = buildStudyItems([single], records, NOW, { ...base, includeFresh: true, newCardsPerDay: 1 });
+    const queue = buildStudyQueue(single, records, NOW, 1);
+    expect(items.map((item) => item.card.id)).toEqual([...queue.due, ...queue.fresh].map((card) => card.id));
+    expect(items.map((item) => item.isNew)).toEqual([false, true]);
+    expect(freshHeldBack).toBe(queue.freshHeldBack);
+  });
+
+  it("苦手だけなら全デッキの苦手を忘れた回数順に返す", () => {
+    const solid = { lapses: 0, reps: 10, difficulty: 4, scheduledDays: 5, state: 2 };
+    const records = [
+      record("1", { deckId: "a" }, { ...solid, lapses: 1, lastReview: 1 }),
+      record("1", { deckId: "b" }, { ...solid, lapses: 3, lastReview: 1 }),
+    ];
+    const { items } = buildStudyItems([deck("a", ["1"]), deck("b", ["1"])], records, NOW, { ...base, focus: "weak" });
+    expect(items.map((item) => item.deckId)).toEqual(["b", "a"]);
+  });
+});
+
+describe("progressKey", () => {
+  it("デッキ id とカード id を区切り文字で結び、別デッキの同じ id と衝突しない", () => {
+    expect(progressKey("a", "1")).not.toBe(progressKey("b", "1"));
+    expect(progressKey("a", "1")).toBe(progressKey("a", "1"));
   });
 });

@@ -262,6 +262,23 @@ button.primary {
   color: var(--color-chip-due-text);
 }
 
+.chip-deck {
+  background: var(--color-surface-alt, #eef1f5);
+  color: var(--color-muted);
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-deck {
+  font-size: 12px;
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chip-new {
   background: var(--color-chip-new-bg);
   color: var(--color-chip-new-text);
@@ -815,6 +832,19 @@ body.study-lock {
 }
 
 /* ===== デッキ詳細 ===== */
+
+/* ホーム上部の「まとめて学習」（全デッキの復習をひとつのセッションで） */
+.study-all {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 4px;
+  flex-wrap: wrap;
+}
+
+.study-all .muted {
+  font-size: 13px;
+}
 
 .deck-toolbar {
   display: flex;
