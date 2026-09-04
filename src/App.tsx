@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { shouldAutoBackup, uploadBackup } from "./cloudbackup";
 import { pruneReviewLog, readAllCardNotes, readAllHiddenCards, readAllProgress, readCardNotes, readProgress, upsertDeckCacheEntry } from "./db";
 import { requestPersistentStorage } from "./quota";
-import { isValidId, visibleDeck, type Deck } from "./deck";
+import { isValidId, visibleDeck, type Deck, type DeckCard } from "./deck";
+import { CardEditor } from "./CardEditor";
+import { saveCardEdit } from "./cardactions";
+import { buildSearchIndex, isSearchable, searchCards, SEARCH_LIMIT, type SearchIndexEntry } from "./cardsearch";
 import { createDeck } from "./github";
 import { ModalSheet } from "./ModalSheet";
 import { DeckDetailView } from "./DeckDetailView";
@@ -10,8 +13,8 @@ import { StatsView } from "./StatsView";
 import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } from "./decklist";
 import { invalidateSnapshotFetches, loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { resumePendingDeckDeletions } from "./deckcleanup";
-import { moveTargets } from "./deckedit";
-import { buildStudyItems, buildStudyQueue, countIntroducedToday, formatPercent, progressKey, retentionPercent } from "./srs";
+import { buildCard, moveTargets, type CardForm } from "./deckedit";
+import { buildStudyItems, buildStudyQueue, countIntroducedToday, formatPercent, isWeakCard, progressKey, retentionPercent } from "./srs";
 import {
   loadAutoCloudBackup,
   loadDeckSort,
@@ -49,6 +52,8 @@ const ALL_DECKS = "__all__";
 interface DeckStats {
   due: number;
   fresh: number;
+  /** 苦手カード（`isWeakCard`）。復習が 0 でも「まとめて学習」を苦手だけで始められるかの判定に使う */
+  weak: number;
   /** 定着率（リザルトのゲージと同じ計算） */
   retentionPercent: number;
   /** この端末で最後に学習した時刻。未学習なら null */
@@ -192,6 +197,14 @@ export function App() {
   // セッションごとに StudyView を作り直すための連番（key に使う）
   const [sessionId, setSessionId] = useState(0);
   const [deckSearch, setDeckSearch] = useState("");
+  /** 実際にカード検索へ使う検索語。デッキ詳細と同じく 200ms 遅らせる（3 万枚の走査を1文字ごとに走らせない） */
+  const [appliedSearch, setAppliedSearch] = useState("");
+  /** カード検索の索引。最初に検索したときに作り、デッキが変わったら次の検索で作り直す（起動時には作らない） */
+  const searchIndexRef = useRef<{ decks: Deck[]; index: SearchIndexEntry[] } | null>(null);
+  /** 検索結果から開いている編集フォーム */
+  const [editingHit, setEditingHit] = useState<{ deckId: string; card: DeckCard } | null>(null);
+  /** 検索結果からの編集・移動で伝えること（端末側の進捗を移せなかった等） */
+  const [cardMessage, setCardMessage] = useState<string | null>(null);
   const [deckSort, setDeckSort] = useState<DeckSort>(loadDeckSort);
   const [startSize, setStartSize] = useState<SessionSize>(loadSessionSize);
   // 開始シートで選んでいるタグと、件数を出すための進捗（シートを開いたときに1回読む）
@@ -246,6 +259,8 @@ export function App() {
       next.set(entry.deckId, {
         due: queue.due.length,
         fresh: queue.fresh.length,
+        // touched は非表示・削除済みを除いたカードの進捗だけ（孤児の進捗を苦手に数えない）
+        weak: touched.filter(isWeakCard).length,
         retentionPercent: retentionPercent(touched, deck.cards.length),
         // 進捗の更新時刻の最大値を「最後に学習した時刻」として扱う
         lastStudiedAt: records.length === 0 ? null : Math.max(...records.map((record) => record.updatedAt)),
@@ -346,11 +361,11 @@ export function App() {
     return buildStudyItems(startingDecks, startProgress, new Date(), {
       newCardsPerDay: loadNewCardsPerDay(),
       tag: null,
-      focus: "all",
+      focus: startFocus,
       weakSince: null,
       includeFresh: false,
     }).items;
-  }, [startingAll, startingDecks, startProgress]);
+  }, [startingAll, startingDecks, startProgress, startFocus]);
 
   /**
    * 開始シートに出すタグ一覧。1デッキならそのデッキの全タグ（カード一覧の絞り込みと同じ並び）。
@@ -366,6 +381,11 @@ export function App() {
     return [...tags].sort((left, right) => left.localeCompare(right, "ja"));
   }, [startingAll, startingAllItems, startingDecks]);
 
+  useEffect(() => {
+    // 範囲を切り替えて候補から消えたタグを選んだままにすると、表示は「全タグ」なのに枚数が 0 で止まる
+    if (startTag !== null && !startTags.includes(startTag)) setStartTag(null);
+  }, [startTags, startTag]);
+
   /** 選んでいるタグでいま学習できる枚数。進捗を読み終えるまでは null */
   const startCounts = useMemo(() => {
     if (startingDecks.length === 0 || startProgress === null) return null;
@@ -379,6 +399,24 @@ export function App() {
 
   /** 全デッキでいま復習できる枚数（ホームの「まとめて学習」に出す）。統計と同じ visibleDeck 基準 */
   const totalDue = useMemo(() => [...stats.values()].reduce((total, entry) => total + entry.due, 0), [stats]);
+  /** 全デッキの苦手カード。復習が 0 でも苦手があれば「まとめて学習」を押せる */
+  const totalWeak = useMemo(() => [...stats.values()].reduce((total, entry) => total + entry.weak, 0), [stats]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setAppliedSearch(deckSearch), 200);
+    return () => window.clearTimeout(timer);
+  }, [deckSearch]);
+
+  /** 検索欄が 2 文字以上のときだけ、全デッキのカードを探す。null なら節を出さない */
+  const cardHits = useMemo(() => {
+    if (!isSearchable(appliedSearch) || allDecks.length === 0) return null;
+    let cached = searchIndexRef.current;
+    if (!cached || cached.decks !== allDecks) {
+      cached = { decks: allDecks, index: buildSearchIndex(allDecks) };
+      searchIndexRef.current = cached;
+    }
+    return searchCards(cached.index, appliedSearch);
+  }, [appliedSearch, allDecks]);
 
   const deckItems = useMemo<(DeckListItem & { entry: DeckCacheEntry })[]>(() => {
     if (!snapshot) return [];
@@ -401,6 +439,7 @@ export function App() {
     () => sortDecks(filterDecks(deckItems, deckSearch), deckSort),
     [deckItems, deckSearch, deckSort],
   );
+  const canEditCards = loadToken() !== "";
 
   function handleDeckSortChange(next: DeckSort) {
     setDeckSort(next);
@@ -504,13 +543,29 @@ export function App() {
   function openStartSheet(deckId: string, deckTags: string[]) {
     const remembered = deckId === ALL_DECKS ? null : loadStudyTag(deckId);
     setStartTag(remembered !== null && deckTags.includes(remembered) ? remembered : null);
-    setStartFocus("all");
+    // 「まとめて学習」で復習が 0 のときは苦手だけで開く（押した直後に 0 枚を見せない）
+    setStartFocus(deckId === ALL_DECKS && totalDue === 0 && totalWeak > 0 ? "weak" : "all");
     setStartProgress(null);
     setStartingDeckId(deckId);
     void readStudyContext(deckId).then(({ progress, used }) => {
       setUsedNewCardsToday(used);
       setStartProgress(progress);
     });
+  }
+
+  /** 検索結果の編集フォームの保存。移動なら移動先・元の両方を snapshot へ反映する */
+  async function saveHitCard(form: CardForm, targetDeckId: string): Promise<{ ok: boolean; message?: string }> {
+    const target = editingHit;
+    if (!target) return { ok: false };
+    try {
+      const outcome = await saveCardEdit(target.deckId, buildCard(target.card.id, form), targetDeckId, loadToken());
+      applyDeckUpdates(...outcome.decks);
+      setEditingHit(null);
+      setCardMessage(outcome.localMessage === null ? null : `カードは移動しましたが、${outcome.localMessage}`);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "保存に失敗しました。" };
+    }
   }
 
   function closeStudy(restart: boolean) {
@@ -718,10 +773,16 @@ export function App() {
           {snapshot.decks.length === 0 && !snapshot.offline && <p className="muted">デッキがありません。decks/ に JSON を追加してください。</p>}
           {snapshot.decks.length > 0 && (
             <div className="study-all">
-              <button type="button" className="primary" disabled={totalDue === 0} onClick={() => openStartSheet(ALL_DECKS, [])}>
+              <button type="button" className="primary" disabled={totalDue === 0 && totalWeak === 0} onClick={() => openStartSheet(ALL_DECKS, [])}>
                 まとめて学習
               </button>
-              <span className="muted">{totalDue > 0 ? `全デッキで復習できるのは ${totalDue} 枚` : "いま復習できるカードはありません"}</span>
+              <span className="muted">
+                {totalDue > 0
+                  ? `全デッキで復習できるのは ${totalDue} 枚`
+                  : totalWeak > 0
+                    ? `復習はありません。苦手カードが ${totalWeak} 枚あります`
+                    : "いま復習できるカードはありません"}
+              </span>
             </div>
           )}
           {snapshot.decks.length > 0 && <h2>マイデッキ</h2>}
@@ -730,7 +791,7 @@ export function App() {
               <input
                 type="text"
                 value={deckSearch}
-                placeholder="デッキを検索"
+                placeholder="デッキ・カードを検索"
                 onChange={(event) => setDeckSearch(event.target.value)}
               />
               <select value={deckSort} onChange={(event) => handleDeckSortChange(event.target.value as DeckSort)}>
@@ -740,9 +801,10 @@ export function App() {
               </select>
             </div>
           )}
-          {snapshot.decks.length > 0 && visibleDecks.length === 0 && (
+          {snapshot.decks.length > 0 && visibleDecks.length === 0 && (cardHits === null || cardHits.total === 0) && (
             <p className="muted">該当するデッキがありません。</p>
           )}
+          {cardMessage && <p className="notice warning">{cardMessage}</p>}
           <ul className="deck-list">
             {visibleDecks.map(({ entry, todo: studyCount, lastStudiedAt }) => {
               const deckStats = stats.get(entry.deckId);
@@ -774,8 +836,64 @@ export function App() {
               );
             })}
           </ul>
+          {cardHits !== null && (
+            <>
+              <h2>カード</h2>
+              {cardHits.total === 0 ? (
+                <p className="muted">該当するカードがありません。</p>
+              ) : (
+                <p className="muted card-hits-summary">
+                  {cardHits.total.toLocaleString("ja-JP")} 枚が該当
+                  {cardHits.total > SEARCH_LIMIT && `（最初の ${SEARCH_LIMIT} 枚を表示）`}
+                </p>
+              )}
+              <ul className="card-hits">
+                {cardHits.hits.map((hit) => {
+                  const isHidden = hidden.get(hit.deckId)?.has(hit.card.id) ?? false;
+                  const body = (
+                    <>
+                      <span className="card-hit-meta">
+                        <span className="chip chip-deck">{hit.deckName}</span>
+                        {isHidden && <span className="chip chip-hidden">非表示</span>}
+                      </span>
+                      <span className="card-hit-front">{hit.card.front}</span>
+                      <span className="card-hit-back muted">{hit.card.back}</span>
+                    </>
+                  );
+                  return (
+                    <li key={`${hit.deckId}/${hit.card.id}`} className="card-hit">
+                      {canEditCards ? (
+                        <button type="button" className="card-hit-body" onClick={() => setEditingHit({ deckId: hit.deckId, card: hit.card })}>
+                          {body}
+                        </button>
+                      ) : (
+                        <div className="card-hit-body">{body}</div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              {!canEditCards && cardHits.total > 0 && (
+                <p className="muted">編集するには、設定で GitHub トークンを登録してください。</p>
+              )}
+            </>
+          )}
         </>
       )}
+      {editingHit !== null && (() => {
+        // 生のデッキ（非表示を除かない）を渡す。タグ候補が非表示カードのぶん欠けないように
+        const deck = allDecks.find((candidate) => candidate.id === editingHit.deckId);
+        if (!deck) return null;
+        return (
+          <CardEditor
+            deck={deck}
+            card={editingHit.card}
+            moveTargets={moveTargets(deck, allDecks)}
+            onSave={saveHitCard}
+            onCancel={() => setEditingHit(null)}
+          />
+        );
+      })()}
       {startingDeckId !== null && (
         <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="学習を開始">
           <div className="sheet">
@@ -802,7 +920,6 @@ export function App() {
                 </button>
               </div>
             </div>
-            {!startingAll && (
             <div className="sheet-field">
               <span className="sheet-label">範囲</span>
               <div className="segmented">
@@ -814,7 +931,6 @@ export function App() {
                 </button>
               </div>
             </div>
-            )}
             <div className="sheet-field">
               <span className="sheet-label">枚数</span>
               <div className="segmented">
@@ -836,7 +952,7 @@ export function App() {
                 </select>
               </div>
             )}
-            {startCounts !== null && startingAll && (
+            {startCounts !== null && startingAll && startFocus === "all" && (
               <p className="muted sheet-counts">
                 {startTag === null ? "全デッキで" : `「${startTag}」で`}いま復習できるのは
                 <strong> {startCounts.due} 枚 </strong>
@@ -852,7 +968,7 @@ export function App() {
             )}
             {startCounts !== null && startFocus === "weak" && (
               <p className="muted sheet-counts">
-                {startTag === null ? "このデッキの" : `「${startTag}」の`}苦手カードは
+                {startTag === null ? (startingAll ? "全デッキの" : "このデッキの") : `「${startTag}」の`}苦手カードは
                 <strong> {startCounts.due} 枚 </strong>
                 です。
                 {startCounts.due === 0 && "3回出しても定着しない・忘れたことがある・難しさが高いカードが対象で、間隔が3週間以上になったものは外れます。"}
@@ -862,7 +978,9 @@ export function App() {
               {startMode === "buzzer"
                 ? "問題文が1文字ずつ表示されます。押した時点で止まり、答え合わせは自己申告です。"
                 : "答えを表示したあと、左スワイプで「もう一度」、右スワイプは答えるまでの速さで自動評価します。"}
-              {startingAll
+              {startingAll && startFocus === "weak"
+                ? `全デッキの苦手カードを期限前でも${startOrder === "random" ? "ランダムに" : "忘れた回数が多い順に"}出します（次回の間隔は今日から数え直します）。カードにはデッキ名を添えます。`
+                : startingAll
                 ? `全デッキの復習カードを${startOrder === "random" ? "ランダムに" : "期限が近い順に"}出します。カードにはデッキ名を添えます。`
                 : startFocus === "weak"
                 ? `苦手カードを期限前でも出します（次回の間隔は今日から数え直します）。${startOrder === "random" ? "順番はランダムです。" : "忘れた回数が多い順です。"}`
