@@ -1138,6 +1138,8 @@ textarea {
   margin-inline: auto;
 }
 
+/* 学習開始シートは段が増えた（範囲の切替）ので、低い画面ではシート内でスクロールさせる */
+.sheet-backdrop .sheet,
 .card-edit-dialog .sheet,
 .form-dialog .sheet {
   /* --viewport-height はキーボードが出ている間の実際の高さ（viewport.ts が入れる） */

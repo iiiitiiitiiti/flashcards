@@ -497,3 +497,63 @@ describe("学習中のカード編集", () => {
     expect((editButton() as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+describe("苦手だけ（focus=weak）", () => {
+  const yesterday = new Date("2026-08-08T03:00:00Z").getTime();
+  /** 定着後に1回忘れたカード（苦手）。期限は遠い未来 */
+  function weakRecord(cardId: string, lapses = 1): ProgressRecord {
+    const base = rate(null, 3, new Date("2026-08-01T03:00:00Z"));
+    return {
+      deckId: "deck1",
+      cardId,
+      progress: { ...base, state: 2, reps: 6, lapses, scheduledDays: 3, difficulty: 5, due: Date.now() + 30 * 86_400_000, lastReview: yesterday },
+      introducedDayKey: "2026-08-01",
+      updatedAt: yesterday,
+    };
+  }
+  /** 順調に定着しているカード（苦手ではない） */
+  function solidRecord(cardId: string): ProgressRecord {
+    return { ...weakRecord(cardId, 0), progress: { ...weakRecord(cardId, 0).progress, lapses: 0, difficulty: 3 } };
+  }
+
+  it("苦手カードだけを忘れた回数順に出し、全部評価すると「つづける」は出ない", async () => {
+    const since = Date.now();
+    const { container } = renderStudy({
+      focus: "weak",
+      weakSince: since,
+      initialProgress: [weakRecord("001", 1), solidRecord("002"), weakRecord("003", 2)],
+    });
+    // 003（lapses 2）→ 001（lapses 1）。002 は苦手ではないので出ない。期限前でも出る
+    expect(container.querySelector(".study-front")?.textContent).toBe("イタリアの首都は");
+    expect(remainingText()).toContain("残り 2 枚");
+    reveal(container);
+    fireEvent.click(screen.getByText("わかった"));
+    await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("日本の首都は"));
+    reveal(container);
+    fireEvent.click(screen.getByText("わかった"));
+
+    // 評価した2枚は weakSince 以降に評価済みなので残りに入らず、「つづける」は出ない
+    await waitFor(() => expect(screen.getByText("終了する")).toBeTruthy());
+    expect(screen.queryByText("つづける")).toBeNull();
+    expect(screen.getByText(/苦手カードは一通り復習しました/)).toBeTruthy();
+  });
+
+  it("苦手が枚数より多ければ「つづける」が出る。「つづける」は同じ設定での再開を親へ伝える", async () => {
+    const { container, closed } = renderStudy({
+      focus: "weak",
+      weakSince: Date.now(),
+      sessionSize: 1,
+      initialProgress: [weakRecord("001"), weakRecord("002"), weakRecord("003")],
+    });
+    reveal(container);
+    fireEvent.click(screen.getByText("わかった"));
+    await waitFor(() => expect(screen.getByText("つづける")).toBeTruthy());
+    fireEvent.click(screen.getByText("つづける"));
+    expect(closed).toEqual([true]);
+  });
+
+  it("苦手が1枚も無ければ、苦手用の空メッセージを出す", () => {
+    renderStudy({ focus: "weak", weakSince: Date.now(), initialProgress: [solidRecord("001")] });
+    expect(screen.getByText("苦手カードはありません")).toBeTruthy();
+  });
+});

@@ -3,6 +3,7 @@ import type { Deck } from "../src/deck";
 import {
   retentionPercent,
   buildStudyQueue,
+  isWeakCard,
   countIntroducedToday,
   dayKey,
   DEFAULT_RATING_THRESHOLDS,
@@ -385,5 +386,103 @@ describe("countIntroducedToday", () => {
       record("a", { deckId: "deck2", introducedDayKey: today }),
     ];
     expect(countIntroducedToday(records, NOW)).toBe(2);
+  });
+});
+
+describe("苦手カード（isWeakCard / buildStudyQueue focus=weak）", () => {
+  function deck(cardIds: string[], tags: Record<string, string[]> = {}): Deck {
+    return {
+      schemaVersion: 1,
+      id: "deck",
+      name: "テスト",
+      cards: cardIds.map((id) => ({ id, front: `Q${id}`, back: `A${id}`, tags: tags[id] })),
+    };
+  }
+  const REVIEW = 2;
+  const LEARNING = 1;
+  const yesterday = new Date("2026-08-08T03:00:00Z").getTime();
+  /** 定着済みで問題のないカード */
+  const solid = { lapses: 0, reps: 10, difficulty: 4, scheduledDays: 5, state: REVIEW };
+
+  it("3回以上出しても定着していないカードは苦手。2回ならまだ苦手ではない", () => {
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, reps: 3, state: LEARNING })).toBe(true);
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, reps: 2, state: LEARNING })).toBe(false);
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, reps: 3 })).toBe(false);
+  });
+
+  it("忘れたことがあるカード（lapses ≥ 1）は苦手。ただし間隔が 21 日以上になったら外れる", () => {
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, lapses: 1 })).toBe(true);
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, lapses: 1, scheduledDays: 20 })).toBe(true);
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, lapses: 3, scheduledDays: 21 })).toBe(false);
+  });
+
+  it("Review のまま「難しい」を押し続けて難しさが 8 以上のカードも苦手（lapses は増えない）", () => {
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, difficulty: 8 })).toBe(true);
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, difficulty: 7.9 })).toBe(false);
+    expect(isWeakCard({ ...rate(null, 3, NOW), ...solid, difficulty: 9.5, scheduledDays: 30 })).toBe(false);
+  });
+
+  it("実際の FSRS 遷移: 学習中に「もう一度」を続けると lapses は増えないが苦手になる", () => {
+    let progress = rate(null, 1, NOW);
+    expect(isWeakCard(progress)).toBe(false);
+    progress = rate(progress, 1, new Date(progress.due + 1000));
+    expect(progress.lapses).toBe(0);
+    // 2回目の「もう一度」で難しさが 8 を超える（実測 8.8）
+    expect(isWeakCard(progress)).toBe(true);
+  });
+
+  it("実際の FSRS 遷移: 順調に覚えたカードは苦手ではなく、定着後に1回忘れると苦手になる", () => {
+    let progress = rate(null, 3, NOW);
+    progress = rate(progress, 3, new Date(progress.due + 1000));
+    progress = rate(progress, 4, new Date(progress.due + 1000));
+    expect(progress.state).toBe(REVIEW);
+    expect(isWeakCard(progress)).toBe(false);
+    progress = rate(progress, 1, new Date(progress.due + 1000));
+    expect(progress.lapses).toBe(1);
+    expect(isWeakCard(progress)).toBe(true);
+  });
+
+  it("苦手だけを、忘れた回数 → 難しさの降順で返す。期限前でも出し、新規は含めない", () => {
+    const far = NOW.getTime() + 30 * 86_400_000;
+    const records = [
+      record("a", {}, { ...solid, lapses: 1, difficulty: 5, due: far, lastReview: yesterday }),
+      record("b", {}, { ...solid, lapses: 3, difficulty: 4, due: far, lastReview: yesterday }),
+      record("c", {}, { ...solid, lapses: 1, difficulty: 9, due: far, lastReview: yesterday }),
+      record("d", {}, { ...solid, due: NOW.getTime() - 1000, lastReview: yesterday }),
+      record("e", {}, { ...solid, reps: 4, difficulty: 7, state: LEARNING, due: far, lastReview: yesterday }),
+    ];
+    const queue = buildStudyQueue(deck(["a", "b", "c", "d", "e", "fresh"]), records, NOW, 10, null, undefined, "weak");
+    expect(queue.due.map((card) => card.id)).toEqual(["b", "c", "a", "e"]);
+    expect(queue.fresh).toEqual([]);
+    expect(queue.freshHeldBack).toBe(0);
+  });
+
+  it("weakSince 以降に評価したカードは除く（「つづける」で同じカードを繰り返さない）。null なら除かない", () => {
+    const since = NOW.getTime() - 10 * 60_000;
+    const records = [
+      record("a", {}, { ...solid, lapses: 2, lastReview: NOW.getTime() - 60_000 }),
+      record("b", {}, { ...solid, lapses: 2, lastReview: since - 1 }),
+      record("c", {}, { ...solid, lapses: 2, lastReview: null }),
+    ];
+    const withSince = buildStudyQueue(deck(["a", "b", "c"]), records, NOW, 10, null, undefined, "weak", since);
+    expect(withSince.due.map((card) => card.id)).toEqual(["b", "c"]);
+    const withoutSince = buildStudyQueue(deck(["a", "b", "c"]), records, NOW, 10, null, undefined, "weak");
+    expect(withoutSince.due.map((card) => card.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("タグで絞れる", () => {
+    const records = [
+      record("a", {}, { ...solid, lapses: 1, lastReview: yesterday }),
+      record("b", {}, { ...solid, lapses: 1, lastReview: yesterday }),
+    ];
+    const queue = buildStudyQueue(deck(["a", "b"], { a: ["x"], b: ["y"] }), records, NOW, 10, "x", undefined, "weak");
+    expect(queue.due.map((card) => card.id)).toEqual(["a"]);
+  });
+
+  it("focus を省略すると従来どおり（期限切れ＋新規）", () => {
+    const records = [record("a", {}, { ...solid, lapses: 3, due: NOW.getTime() + 60_000, lastReview: yesterday })];
+    const queue = buildStudyQueue(deck(["a", "b"]), records, NOW);
+    expect(queue.due).toEqual([]);
+    expect(queue.fresh.map((card) => card.id)).toEqual(["b"]);
   });
 });

@@ -38,7 +38,7 @@ import {
 } from "./storage";
 import { SettingsView } from "./SettingsView";
 import { StudyView } from "./StudyView";
-import type { DeckCacheEntry, DeckSnapshot, ProgressRecord, StudyMode, StudyOrder } from "./types";
+import type { DeckCacheEntry, DeckSnapshot, ProgressRecord, StudyFocus, StudyMode, StudyOrder } from "./types";
 
 /** 学習終了からバックアップ開始までの待ち。統計の再計算（進捗の全件読み）と重ねない */
 const AUTO_BACKUP_DELAY_MS = 2_000;
@@ -67,7 +67,20 @@ function Donut({ percent }: { percent: number }) {
 
 type View =
   | { type: "home" }
-  | { type: "study"; deckId: string; progress: ProgressRecord[]; mode: StudyMode; sessionSize: SessionSize; order: StudyOrder; tag: string | null; notes: Map<string, string>; sessionId: number }
+  | {
+      type: "study";
+      deckId: string;
+      progress: ProgressRecord[];
+      mode: StudyMode;
+      sessionSize: SessionSize;
+      order: StudyOrder;
+      tag: string | null;
+      focus: StudyFocus;
+      /** 苦手ドリルを開いた時刻。「つづける」で引き継ぎ、それ以降に評価したカードを出さない */
+      weakSince: number | null;
+      notes: Map<string, string>;
+      sessionId: number;
+    }
   | { type: "deck"; deckId: string }
   | { type: "stats" }
   | { type: "settings" };
@@ -176,6 +189,8 @@ export function App() {
   const [startingDeckId, setStartingDeckId] = useState<string | null>(null);
   const [startMode, setStartMode] = useState<StudyMode>(loadStudyMode);
   const [startOrder, setStartOrder] = useState<StudyOrder>(loadStudyOrder);
+  /** 出題の範囲。覚えない（前回「苦手だけ」で開いた別のデッキが 0 枚・開始不可で出るのを避ける） */
+  const [startFocus, setStartFocus] = useState<StudyFocus>("all");
   // セッションごとに StudyView を作り直すための連番（key に使う）
   const [sessionId, setSessionId] = useState(0);
   const [deckSearch, setDeckSearch] = useState("");
@@ -330,9 +345,9 @@ export function App() {
   /** 選んでいるタグでいま学習できる枚数。進捗を読み終えるまでは null */
   const startCounts = useMemo(() => {
     if (!startingDeck || startProgress === null) return null;
-    const queue = buildStudyQueue(startingDeck, startProgress, new Date(), loadNewCardsPerDay(), startTag, usedNewCardsToday);
+    const queue = buildStudyQueue(startingDeck, startProgress, new Date(), loadNewCardsPerDay(), startTag, usedNewCardsToday, startFocus);
     return { due: queue.due.length, fresh: queue.fresh.length };
-  }, [startingDeck, startProgress, startTag, usedNewCardsToday]);
+  }, [startingDeck, startProgress, startTag, startFocus, usedNewCardsToday]);
 
   const deckItems = useMemo<(DeckListItem & { entry: DeckCacheEntry })[]>(() => {
     if (!snapshot) return [];
@@ -425,7 +440,15 @@ export function App() {
     };
   }, []);
 
-  async function startStudy(deckId: string, mode: StudyMode, sessionSize: SessionSize, order: StudyOrder, tag: string | null) {
+  async function startStudy(
+    deckId: string,
+    mode: StudyMode,
+    sessionSize: SessionSize,
+    order: StudyOrder,
+    tag: string | null,
+    focus: StudyFocus,
+    weakSince: number | null,
+  ) {
     // 次回の既定値として選択を覚えておく（タグだけはデッキごとに覚える）
     saveStudyMode(mode);
     saveSessionSize(sessionSize);
@@ -436,13 +459,14 @@ export function App() {
     const notes = new Map((await readCardNotes(deckId)).map((note) => [note.cardId, note.text]));
     setUsedNewCardsToday(used);
     setSessionId((id) => id + 1);
-    setView({ type: "study", deckId, progress, mode, sessionSize, order, tag, notes, sessionId: sessionId + 1 });
+    setView({ type: "study", deckId, progress, mode, sessionSize, order, tag, focus, weakSince, notes, sessionId: sessionId + 1 });
   }
 
   /** 学習開始シートを開く。タグの初期値は前回の選択（デッキに無いタグなら「全タグ」） */
   function openStartSheet(deckId: string, deckTags: string[]) {
     const remembered = loadStudyTag(deckId);
     setStartTag(remembered !== null && deckTags.includes(remembered) ? remembered : null);
+    setStartFocus("all");
     setStartProgress(null);
     setStartingDeckId(deckId);
     void readStudyContext(deckId).then(({ progress, used }) => {
@@ -454,7 +478,7 @@ export function App() {
   function closeStudy(restart: boolean) {
     if (restart && view.type === "study") {
       // 同じ設定のまま、最新の進捗でセッションを組み直す
-      void startStudy(view.deckId, view.mode, view.sessionSize, view.order, view.tag);
+      void startStudy(view.deckId, view.mode, view.sessionSize, view.order, view.tag, view.focus, view.weakSince);
       return;
     }
     setView({ type: "home" });
@@ -582,6 +606,8 @@ export function App() {
             sessionSize={view.sessionSize}
             order={view.order}
             tag={view.tag}
+            focus={view.focus}
+            weakSince={view.weakSince}
             usedNewCardsToday={usedNewCardsToday}
             initialNotes={view.notes}
             canEditCards={loadToken() !== ""}
@@ -726,6 +752,17 @@ export function App() {
               </div>
             </div>
             <div className="sheet-field">
+              <span className="sheet-label">範囲</span>
+              <div className="segmented">
+                <button type="button" aria-pressed={startFocus === "all"} onClick={() => setStartFocus("all")}>
+                  すべて
+                </button>
+                <button type="button" aria-pressed={startFocus === "weak"} onClick={() => setStartFocus("weak")}>
+                  苦手だけ
+                </button>
+              </div>
+            </div>
+            <div className="sheet-field">
               <span className="sheet-label">枚数</span>
               <div className="segmented">
                 {SESSION_SIZES.map((size) => (
@@ -746,27 +783,37 @@ export function App() {
                 </select>
               </div>
             )}
-            {startCounts !== null && (
+            {startCounts !== null && startFocus === "all" && (
               <p className="muted sheet-counts">
                 {startTag === null ? "このデッキで" : `「${startTag}」で`}いま学習できるのは
                 <strong> 復習 {startCounts.due} 枚・新規 {startCounts.fresh} 枚 </strong>
                 です。
               </p>
             )}
+            {startCounts !== null && startFocus === "weak" && (
+              <p className="muted sheet-counts">
+                {startTag === null ? "このデッキの" : `「${startTag}」の`}苦手カードは
+                <strong> {startCounts.due} 枚 </strong>
+                です。
+                {startCounts.due === 0 && "3回出しても定着しない・忘れたことがある・難しさが高いカードが対象で、間隔が3週間以上になったものは外れます。"}
+              </p>
+            )}
             <p className="muted">
               {startMode === "buzzer"
                 ? "問題文が1文字ずつ表示されます。押した時点で止まり、答え合わせは自己申告です。"
                 : "答えを表示したあと、左スワイプで「もう一度」、右スワイプは答えるまでの速さで自動評価します。"}
-              {startOrder === "random"
-                ? "出題順はデッキ全体からランダムに選びます。"
-                : "出題順は復習（期限が近い順）→ 新規（デッキの上から順）です。"}
+              {startFocus === "weak"
+                ? `苦手カードを期限前でも出します（次回の間隔は今日から数え直します）。${startOrder === "random" ? "順番はランダムです。" : "忘れた回数が多い順です。"}`
+                : startOrder === "random"
+                  ? "出題順はデッキ全体からランダムに選びます。"
+                  : "出題順は復習（期限が近い順）→ 新規（デッキの上から順）です。"}
             </p>
             <div className="sheet-actions">
               <button
                 type="button"
                 className="primary"
                 disabled={startCounts !== null && startCounts.due + startCounts.fresh === 0}
-                onClick={() => void startStudy(startingDeckId, startMode, startSize, startOrder, startTag)}
+                onClick={() => void startStudy(startingDeckId, startMode, startSize, startOrder, startTag, startFocus, startFocus === "weak" ? Date.now() : null)}
               >
                 開始
               </button>
