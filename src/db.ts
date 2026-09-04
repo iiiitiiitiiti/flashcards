@@ -361,3 +361,56 @@ export async function deleteDeckLocalData(deckId: string): Promise<{ progress: n
     drafts: draftIds.length,
   };
 }
+
+/**
+ * カード1枚の端末側データ（進捗・評価ログ・メモ・非表示）を別デッキへ移す。
+ * デッキ移動（GitHub 側は先に済ませる）のあとに呼ぶ。鍵が (deckId, cardId) なので、
+ * 移動先に**同じ鍵の進捗が既にあれば何もせず失敗にする**（黙って上書きしない）。
+ *
+ * `deleteDeckLocalData` と同じく、`reviewLog` には deckId のインデックスが無いので
+ * 読み取り専用で鍵を集めてから、読み書きトランザクションで一括して書く。
+ */
+export async function moveCardLocalData(
+  fromDeck: string,
+  toDeck: string,
+  cardId: string,
+): Promise<{ progress: boolean; notes: boolean; hidden: boolean; reviews: number }> {
+  if (fromDeck === toDeck) return { progress: false, notes: false, hidden: false, reviews: 0 };
+  const db = await getDb();
+
+  const readTx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog"]);
+  const { progress, note, hidden, reviews, occupied } = await readAtomically(readTx, async () => {
+    const progress = await readTx.objectStore("cardProgress").get([fromDeck, cardId]);
+    const occupied = (await readTx.objectStore("cardProgress").get([toDeck, cardId])) !== undefined;
+    const note = await readTx.objectStore("cardNotes").get([fromDeck, cardId]);
+    const hidden = await readTx.objectStore("hiddenCards").get([fromDeck, cardId]);
+    const reviews: ReviewLogEntry[] = [];
+    let cursor = await readTx.objectStore("reviewLog").openCursor();
+    while (cursor) {
+      if (cursor.value.deckId === fromDeck && cursor.value.cardId === cardId) reviews.push(cursor.value);
+      cursor = await cursor.continue();
+    }
+    return { progress, note, hidden, reviews, occupied };
+  });
+  if (occupied) {
+    throw new Error(`移動先のデッキに同じ id「${cardId}」の学習進捗が既にあります。`);
+  }
+
+  const tx = db.transaction(["cardProgress", "cardNotes", "hiddenCards", "reviewLog"], "readwrite");
+  await runAtomically(tx, (add) => {
+    if (progress) {
+      add(tx.objectStore("cardProgress").delete([fromDeck, cardId]));
+      add(tx.objectStore("cardProgress").put({ ...progress, deckId: toDeck }));
+    }
+    if (note) {
+      add(tx.objectStore("cardNotes").delete([fromDeck, cardId]));
+      add(tx.objectStore("cardNotes").put({ ...note, deckId: toDeck }));
+    }
+    if (hidden) {
+      add(tx.objectStore("hiddenCards").delete([fromDeck, cardId]));
+      add(tx.objectStore("hiddenCards").put({ ...hidden, deckId: toDeck }));
+    }
+    for (const entry of reviews) add(tx.objectStore("reviewLog").put({ ...entry, deckId: toDeck }));
+  });
+  return { progress: progress !== undefined, notes: note !== undefined, hidden: hidden !== undefined, reviews: reviews.length };
+}

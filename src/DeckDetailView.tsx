@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCardsCsv } from "./csv";
 import type { Deck, DeckCard } from "./deck";
-import { deleteImportDraft, deleteProgress, deleteProgressByDeck, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
-import { appendCards, parseTags, upsertCard } from "./deckedit";
+import { deleteImportDraft, deleteProgress, deleteProgressByDeck, moveCardLocalData, readHiddenCards, readImportDraft, readProgress, saveImportDraft, setCardHidden } from "./db";
+import { appendCards, buildCard, collectDeckTags, isGeneratedDeck, tagsForMove, upsertCard, validateCardForm, validateGeneratedTags, type CardForm } from "./deckedit";
+import { TagPicker } from "./TagPicker";
 import { cleanUpDeletedDeck } from "./deckcleanup";
 import { downloadBackup } from "./backup";
 import { ModalSheet } from "./ModalSheet";
 import { buildPageItems, CARDS_PER_PAGE, clampPage } from "./pagination";
-import { deleteDeck, writeDeck } from "./github";
+import { deleteDeck, moveCardBetweenDecks, writeDeck } from "./github";
 import { addPendingDeckDeletion, loadToken } from "./storage";
 import type { ImportDraft, ProgressRecord } from "./types";
 
@@ -16,22 +17,22 @@ const FSRS_STATE_REVIEW = 2;
 interface DeckDetailViewProps {
   deck: Deck;
   onClose: () => void;
-  /** GitHub への保存成功後に、保存結果の最新デッキを渡す（App が即時反映する） */
-  onDeckUpdated: (deck: Deck) => void;
+  /** GitHub への保存成功後に、保存結果の最新デッキを渡す（App が即時反映する）。移動では移動先・元の2つを渡す */
+  onDeckUpdated: (...decks: Deck[]) => void;
+  /** カードの移動先にできるデッキ（`moveTargets`）。省略なら移動できない */
+  moveTargets?: Deck[];
   /** デッキと端末側データの削除が両方とも終わったとき */
   onDeckDeleted: () => void;
 }
 
-interface EditorState {
+interface EditorState extends CardForm {
   /** null なら新規追加 */
   cardId: string | null;
-  front: string;
-  back: string;
-  note: string;
-  tags: string;
+  /** 保存先のデッキ。deck.id と違えば移動 */
+  targetDeckId: string;
 }
 
-export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: DeckDetailViewProps) {
+export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted, moveTargets = [] }: DeckDetailViewProps) {
   const [search, setSearch] = useState("");
   /** 実際に絞り込みへ使う検索語。数万枚のデッキで1文字ごとの全走査を避けるため遅らせる */
   const [appliedSearch, setAppliedSearch] = useState("");
@@ -104,6 +105,9 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
   }, [deck]);
 
   const orderById = useMemo(() => new Map(deck.cards.map((card, index) => [card.id, index + 1])), [deck]);
+  /** タグ選択の候補（件数順）。移動先を選んでいればそのデッキのタグ */
+  const editorTargetDeck = moveTargets.find((candidate) => candidate.id === editor?.targetDeckId) ?? deck;
+  const tagOptions = useMemo(() => collectDeckTags(editorTargetDeck), [editorTargetDeck]);
 
   const visibleCards = useMemo(() => {
     const keyword = appliedSearch.trim().toLowerCase();
@@ -171,27 +175,42 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
     setMessage(null);
     setEditor(
       card
-        ? { cardId: card.id, front: card.front, back: card.back, note: card.note ?? "", tags: (card.tags ?? []).join("; ") }
-        : { cardId: null, front: "", back: "", note: "", tags: "" },
+        ? { cardId: card.id, front: card.front, back: card.back, note: card.note ?? "", tags: card.tags ?? [], targetDeckId: deck.id }
+        : { cardId: null, front: "", back: "", note: "", tags: [], targetDeckId: deck.id },
     );
   }
 
   async function handleSave() {
     if (!editor || saving) return;
-    if (editor.front.trim() === "" || editor.back.trim() === "") {
-      setMessage("表面と裏面は必須です。");
+    const invalid = validateCardForm(editor) ?? (isGeneratedDeck(editorTargetDeck) ? validateGeneratedTags(editor.tags) : null);
+    if (invalid) {
+      setMessage(invalid);
       return;
     }
     setSaving(true);
     setMessage(null);
     const cardId = editor.cardId ?? crypto.randomUUID();
-    const card: DeckCard = {
-      id: cardId,
-      front: editor.front.trim(),
-      back: editor.back.trim(),
-      ...(editor.note.trim() !== "" ? { note: editor.note.trim() } : {}),
-      ...(parseTags(editor.tags) ? { tags: parseTags(editor.tags) } : {}),
-    };
+    const card = buildCard(cardId, editor);
+    if (editor.cardId && editor.targetDeckId !== deck.id) {
+      // 移動。GitHub（正本）を先に済ませ、そのあと端末側の進捗・メモ・非表示を移す
+      try {
+        const moved = await moveCardBetweenDecks(deck.id, editor.targetDeckId, loadToken(), card);
+        let note = "";
+        try {
+          await moveCardLocalData(deck.id, editor.targetDeckId, card.id);
+        } catch (error) {
+          note = ` ただし${error instanceof Error ? error.message : "学習進捗を移せませんでした。"}`;
+        }
+        setEditor(null);
+        setMessage(`「${editorTargetDeck.name}」へ移動しました。${note}`);
+        onDeckUpdated(moved.to, moved.from);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "移動に失敗しました。");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     try {
       const next = await writeDeck(
         deck.id,
@@ -362,13 +381,42 @@ export function DeckDetailView({ deck, onClose, onDeckUpdated, onDeckDeleted }: 
             補足メモ（任意）
             <textarea value={editor.note} rows={2} onChange={(event) => setEditor({ ...editor, note: event.target.value })} />
           </label>
+          {editor.cardId && moveTargets.length > 0 && (
+            <label>
+              デッキ
+              <select
+                value={editor.targetDeckId}
+                disabled={saving}
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  const original = deck.cards.find((card) => card.id === editor.cardId)?.tags ?? [];
+                  // 移動先を変えると、小ジャンル系のタグは移動先の体系から選び直す（元に戻せば元のタグに戻る）
+                  setEditor({ ...editor, targetDeckId: nextId, tags: nextId === deck.id ? original : tagsForMove(editor.tags, isGeneratedDeck(deck)) });
+                }}
+              >
+                <option value={deck.id}>{deck.name}（今のデッキ）</option>
+                {moveTargets.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name}
+                  </option>
+                ))}
+              </select>
+              {editor.targetDeckId !== deck.id && <span className="field-hint">学習進捗・メモも一緒に移します。移動先のタグを選んでください。</span>}
+            </label>
+          )}
           <label>
-            タグ（; 区切り・任意）
-            <input type="text" value={editor.tags} onChange={(event) => setEditor({ ...editor, tags: event.target.value })} />
+            タグ（任意）
+            <TagPicker
+              value={editor.tags}
+              options={tagOptions}
+              allowNew={!isGeneratedDeck(deck)}
+              disabled={saving}
+              onChange={(tags) => setEditor({ ...editor, tags })}
+            />
           </label>
           <div className="button-row">
             <button type="button" className="primary" disabled={saving} onClick={() => void handleSave()}>
-              {saving ? "保存中…" : "GitHubへ保存"}
+              {saving ? "保存中…" : editor.targetDeckId !== deck.id ? "移動してGitHubへ保存" : "GitHubへ保存"}
             </button>
             <button type="button" disabled={saving} onClick={() => setEditor(null)}>キャンセル</button>
             {editor.cardId && (

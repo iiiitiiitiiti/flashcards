@@ -3,20 +3,37 @@
 //   npm run decks:sync              生成 → 検証 → 差分表示 → commit・push
 //   npm run decks:sync -- --dry-run 生成 → 検証 → 差分表示まで（commit しない）
 //   npm run decks:sync -- --allow-removals  カード id が消えていても続行する
+//   npm run decks:sync -- --on-conflict=xlsx|app  アプリと xlsx の両方が同じカードを変えていたとき、どちらを残すか
+//   npm run decks:sync -- --writeback       マージで適用したアプリ側の変更を クイズ.xlsx へ書き戻す（xlwings・Excel が要る）
 //
 // 手で `import-quiz-xlsx.py` を叩くと、差分を見ないまま push できてしまう。
 // **カード id が消えると、その学習進捗は孤児になって復旧できない**ため、
 // 削除が1件でもあれば既定で止めて一覧を出す。
+//
+// アプリ（iPhone）で直した本文・タグ・所属デッキは GitHub の decks/ にだけ入り、xlsx には無い。
+// 再生成でそれを消さないよう、前回の再生成コミット（base）→ HEAD（ours）の差分を
+// 生成結果（theirs）へ 3-way マージする（`merge-decks.mjs`。docs/decisions/008 参照）。
 import { spawnSync } from "node:child_process";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { collectAppEdits, mergeDecks } from "./merge-decks.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const decksDir = join(root, "decks");
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const allowRemovals = args.includes("--allow-removals");
+const onConflictArg = (args.find((arg) => arg.startsWith("--on-conflict=")) ?? "--on-conflict=stop").slice("--on-conflict=".length);
+if (!["stop", "xlsx", "app"].includes(onConflictArg)) fail(`--on-conflict は stop / xlsx / app のいずれか: ${onConflictArg}`);
+const writeback = args.includes("--writeback");
+/** 再生成コミットの件名。base の特定にも使うので変えない */
+const SYNC_COMMIT_SUBJECT = "chore: クイズ.xlsx からデッキを再生成";
+/** 大ジャンル名がタグに入る特殊なデッキ。タグを xlsx の列へ戻せないのでマージ対象外 */
+const EXCLUDED_FROM_MERGE = ["quiz-sonota"];
+/** マージ結果のうち xlsx へ書き戻すべき変更を置く（git 管理外） */
+// decks/ の外に置く（中に置くと validate-decks とアプリの一覧取得がデッキとして拾う）
+const PENDING_WRITEBACK = join(root, "writeback-pending.json");
 // Windows の python3 は Store のスタブ（終了コード 9009）なので python を使う
 const PYTHON = process.platform === "win32" ? "python" : "python3";
 
@@ -53,15 +70,45 @@ async function readDecksFromDisk() {
   return decks;
 }
 
-/** HEAD 時点の decks/*.json を同じ形で読む（作業ツリーではなくコミット済みの内容） */
-function readDecksFromHead() {
-  const listing = run("git", ["ls-tree", "--name-only", "HEAD", "decks/"], { capture: true });
-  const decks = new Map();
+/** コミット時点の decks/*.json をデッキの配列で読む（作業ツリーではなくコミット済みの内容） */
+function readDeckFilesAt(revision) {
+  const listing = run("git", ["ls-tree", "--name-only", revision, "decks/"], { capture: true });
+  const decks = [];
   for (const path of listing.split("\n").filter((line) => line.endsWith(".json"))) {
-    const raw = run("git", ["show", `HEAD:${path}`], { capture: true });
-    decks.set(basename(path, ".json"), indexCards(JSON.parse(raw)));
+    const raw = run("git", ["show", `${revision}:${path}`], { capture: true });
+    decks.push(JSON.parse(raw));
   }
   return decks;
+}
+
+/** HEAD 時点の decks/*.json を デッキ id → (カード id → カード) で読む（差分表示用） */
+function readDecksFromHead() {
+  return new Map(readDeckFilesAt("HEAD").map((deck) => [deck.id, indexCards(deck)]));
+}
+
+/** 前回の再生成コミット。無ければ null（初回、または件名を変えた場合） */
+function findLastSyncCommit() {
+  const sha = run("git", ["log", "-1", "--format=%H", `--grep=^${SYNC_COMMIT_SUBJECT}`, "--", "decks"], { capture: true }).trim();
+  return sha === "" ? null : sha;
+}
+
+/** 作業ツリーの decks/*.json をデッキの配列で読む */
+async function readDeckFilesFromDisk() {
+  const files = (await readdir(decksDir)).filter((name) => name.endsWith(".json"));
+  const decks = [];
+  for (const file of files) decks.push(JSON.parse(await readFile(join(decksDir, file), "utf8")));
+  return decks;
+}
+
+/** 生成対象のデッキ id（xlsx 由来）。importer が description に出典を書くので、それで見分ける */
+function generatedDeckIds(decks) {
+  return decks.filter((deck) => (deck.description ?? "").startsWith("クイズ.xlsx「")).map((deck) => deck.id);
+}
+
+function describeEdit(edit) {
+  const where = edit.kind === "move" ? `${edit.fromDeck} → ${edit.toDeck}` : edit.toDeck ?? edit.fromDeck;
+  const front = (edit.ours ?? edit.base)?.front ?? "";
+  return `${edit.kind.padEnd(6)} ${where} / ${edit.cardId}: ${front.slice(0, 40)}`;
 }
 
 function indexCards(deck) {
@@ -118,13 +165,66 @@ if (fetched.status !== 0) {
 // 生成する前に、比べる相手（コミット済みの内容）を読んでおく
 const head = readDecksFromHead();
 
-console.log("== 1/4 クイズ.xlsx からデッキを生成 ==");
+// アプリ側の変更を拾うため、生成の前に base と ours を読んでおく
+const baseCommit = findLastSyncCommit();
+const oursDecks = readDeckFilesAt("HEAD");
+
+console.log("== 1/5 クイズ.xlsx からデッキを生成 ==");
 run(PYTHON, [join("scripts", "import-quiz-xlsx.py"), ...args.filter((arg) => !arg.startsWith("--"))]);
 
-console.log("\n== 2/4 デッキを検証 ==");
+console.log("\n== 2/5 アプリ側の変更を生成結果へマージ ==");
+if (baseCommit === null) {
+  console.warn(`! 前回の再生成コミット（件名「${SYNC_COMMIT_SUBJECT}」）が見つかりません。アプリ側の変更は拾えないので、生成結果をそのまま使います。`);
+} else {
+  const theirsDecks = await readDeckFilesFromDisk();
+  const scope = generatedDeckIds(theirsDecks).filter((id) => !EXCLUDED_FROM_MERGE.includes(id));
+  const edits = collectAppEdits(readDeckFilesAt(baseCommit), oursDecks, [...scope, ...EXCLUDED_FROM_MERGE]);
+  const merged = mergeDecks(theirsDecks, edits, { onConflict: onConflictArg, excludeDecks: EXCLUDED_FROM_MERGE });
+  console.log(`base: ${baseCommit.slice(0, 7)}  アプリ側の変更 ${edits.length} 件 → 適用 ${merged.applied.length} / 反映済み ${merged.noop.length} / 衝突 ${merged.conflicts.length} / 対象外 ${merged.unmergeable.length}`);
+  for (const edit of merged.applied) console.log(`   適用   ${describeEdit(edit)}`);
+  for (const edit of merged.unmergeable) console.log(`   対象外 ${describeEdit(edit)} — ${edit.reason}`);
+  if (merged.conflicts.length > 0) {
+    console.error(`\n✗ アプリと xlsx の両方が変えたカードが ${merged.conflicts.length} 件あります:`);
+    for (const edit of merged.conflicts) {
+      console.error(`   ${describeEdit(edit)}`);
+      console.error(`      アプリ: ${edit.ours.front.slice(0, 50)} | ${(edit.ours.tags ?? []).join(", ")}`);
+      console.error(`      xlsx : ${edit.theirs ? `${edit.theirs.front.slice(0, 50)} | ${(edit.theirs.tags ?? []).join(", ")}` : "（行が無い）"}`);
+    }
+    if (onConflictArg === "stop") {
+      console.error("\nどちらを残すか決めて再実行してください: --on-conflict=xlsx（xlsx を残す・推奨） / --on-conflict=app（アプリ側を通す）");
+      console.error("元へ戻すには: git checkout -- decks");
+      process.exit(1);
+    }
+    console.error(`--on-conflict=${onConflictArg} が指定されているため、${onConflictArg === "xlsx" ? "xlsx 側" : "アプリ側"}を残して続行します。`);
+  }
+  for (const deck of merged.decks) {
+    if (!scope.includes(deck.id)) continue;
+    await writeFile(join(decksDir, `${deck.id}.json`), `${JSON.stringify(deck, null, 2)}\n`, "utf8");
+  }
+  // xlsx へ書き戻すべき変更。--writeback で python に渡す。付けなくても次回まで残る（3値判定なので再適用は no-op）
+  const pending = [...merged.applied, ...merged.unmergeable.filter((edit) => edit.kind === "add")].map((edit) => ({
+    kind: edit.kind,
+    cardId: edit.cardId,
+    fromDeck: edit.fromDeck,
+    toDeck: edit.toDeck,
+    base: edit.base,
+    ours: edit.ours,
+  }));
+  await writeFile(PENDING_WRITEBACK, `${JSON.stringify(pending, null, 2)}\n`, "utf8");
+  if (pending.length > 0) {
+    if (writeback) {
+      console.log("\n-- クイズ.xlsx へ書き戻し --");
+      run(PYTHON, [join("scripts", "writeback-quiz-xlsx.py"), PENDING_WRITEBACK, ...args.filter((arg) => !arg.startsWith("--")), ...(dryRun ? ["--dry-run"] : [])]);
+    } else {
+      console.log(`\n! xlsx へ未反映のアプリ側変更が ${pending.length} 件あります（${basename(PENDING_WRITEBACK)}）。--writeback を付けると xlwings で書き戻します。`);
+    }
+  }
+}
+
+console.log("\n== 3/5 デッキを検証 ==");
 run("node", [join("scripts", "validate-decks.mjs")]);
 
-console.log("\n== 3/4 HEAD との差分 ==");
+console.log("\n== 4/5 HEAD との差分 ==");
 const { rows, removals } = diffDecks(head, await readDecksFromDisk());
 
 if (rows.length === 0) {
@@ -159,14 +259,14 @@ if (removals.length > 0) {
 }
 
 if (dryRun) {
-  console.log("\n== 4/4 --dry-run のため commit しません ==");
+  console.log("\n== 5/5 --dry-run のため commit しません ==");
   console.log("元へ戻すには: git checkout -- decks");
   process.exit(0);
 }
 
-console.log("\n== 4/4 commit して push ==");
+console.log("\n== 5/5 commit して push ==");
 const summary = rows.map((row) => `${row.deckId} +${row.added}/-${row.removed}/~${row.changed}`).join(", ");
 run("git", ["add", "--", "decks"]);
-run("git", ["commit", "-m", `chore: クイズ.xlsx からデッキを再生成\n\n${summary}`]);
+run("git", ["commit", "-m", `${SYNC_COMMIT_SUBJECT}\n\n${summary}`]);
 run("git", ["push"]);
 console.log("\n✓ push しました。GitHub Pages へ反映されると、アプリ側は次回起動時に差分だけ取得します。");

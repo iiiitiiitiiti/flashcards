@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { CardEditor } from "./CardEditor";
 import type { Deck, DeckCard } from "./deck";
 import { buildCard, upsertCard, type CardForm } from "./deckedit";
-import { writeDeck } from "./github";
-import { saveCardNote, saveReview, setCardHidden, undoReview } from "./db";
+import { moveCardBetweenDecks, writeDeck } from "./github";
+import { moveCardLocalData, saveCardNote, saveReview, setCardHidden, undoReview } from "./db";
 import { describeStorageError } from "./quota";
 import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds, loadToken } from "./storage";
@@ -32,8 +32,10 @@ interface StudyViewProps {
   onHide: (cardId: string) => void;
   /** カードを直せるか（GitHub トークンがあるか）。カード一覧と同じ扱い */
   canEditCards: boolean;
-  /** カードを編集して GitHub へ保存したときに親へ伝える（一覧とキャッシュを更新するため） */
-  onDeckUpdated: (deck: Deck) => void;
+  /** カードを編集して GitHub へ保存したときに親へ伝える（一覧とキャッシュを更新するため）。移動では移動先・元の2つを渡す */
+  onDeckUpdated: (...decks: Deck[]) => void;
+  /** カードの移動先にできるデッキ（`moveTargets`）。省略なら移動できない */
+  moveTargets?: Deck[];
   /** 学習を終える。restart が true なら同じ設定でもう一度始める */
   onClose: (restart: boolean) => void;
 }
@@ -132,7 +134,7 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, usedNewCardsToday, initialNotes, canEditCards, onHide, onDeckUpdated, onClose }: StudyViewProps) {
+export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, usedNewCardsToday, initialNotes, canEditCards, onHide, onDeckUpdated, onClose, moveTargets = [] }: StudyViewProps) {
   const initialQueue = useMemo<QueueItem[]>(() => {
     const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay(), tag, usedNewCardsToday);
     const items = [
@@ -448,10 +450,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
    * カードを直して GitHub へ保存し、手元のキューも差し替える。
    * キューは開始時のスナップショットなので、書き戻さないと画面が古いままになる。
    */
-  async function saveCard(form: CardForm): Promise<{ ok: boolean; message?: string }> {
+  async function saveCard(form: CardForm, targetDeckId: string): Promise<{ ok: boolean; message?: string }> {
     const target = editingCard;
     if (!target) return { ok: false };
     const card = buildCard(target.id, form);
+    if (targetDeckId !== deck.id) return moveCard(card, targetDeckId);
     try {
       const next = await writeDeck(deck.id, loadToken(), `deck(${deck.id}): edit card ${card.id}`, (latest) =>
         upsertCard(latest, card),
@@ -470,6 +473,37 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : "保存に失敗しました。" };
     }
+  }
+
+  /**
+   * カードを別デッキへ移す。GitHub（正本）を先に済ませ、そのあと端末側の進捗・メモ・非表示を移す。
+   * このデッキのカードではなくなるので、非表示と同じくキューから抜く（評価はしない）
+   */
+  async function moveCard(card: DeckCard, targetDeckId: string): Promise<{ ok: boolean; message?: string }> {
+    let decks: { from: Deck; to: Deck };
+    try {
+      decks = await moveCardBetweenDecks(deck.id, targetDeckId, loadToken(), card);
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "移動に失敗しました。" };
+    }
+    let localMessage: string | null = null;
+    try {
+      await moveCardLocalData(deck.id, targetDeckId, card.id);
+    } catch (error) {
+      // GitHub 側は移動済み。進捗だけ元デッキに残るので、その旨を伝える（次の学習では新規カードとして出る）
+      localMessage = error instanceof Error ? error.message : "学習進捗を移せませんでした。";
+    }
+    if (!mountedRef.current) return { ok: true };
+    setQueue((items) => items.filter((item) => item.card.id !== card.id));
+    setUndoStack((stack) => stack.filter((entry) => entry.item.card.id !== card.id));
+    setRevealed(false);
+    setShownAt(Date.now());
+    setShownChars(0);
+    setBuzzedAt(null);
+    setEditingCard(null);
+    if (localMessage) setError(`カードは移動しましたが、${localMessage}`);
+    onDeckUpdated(decks.to, decks.from);
+    return { ok: true };
   }
 
   /** 出題から外す。評価はせず、そのカードをキューから抜くだけ（進捗は残す） */
@@ -761,7 +795,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         )}
       </dialog>
       {editingCard !== null && (
-        <CardEditor card={editingCard} onSave={saveCard} onCancel={() => setEditingCard(null)} />
+        <CardEditor deck={deck} card={editingCard} moveTargets={moveTargets} onSave={saveCard} onCancel={() => setEditingCard(null)} />
       )}
       {hideTarget !== null && (
         <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="このクイズを非表示にしますか？">
