@@ -1778,6 +1778,208 @@ textarea {
   margin-top: 16px;
 }
 
+/* 統計の見出し直下の1行（合計など）。カードの数字より一段小さく */
+.stats-summary {
+  margin: -4px 0 8px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* 見出しと右側の切替を1行に */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.segment {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.segment button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-muted);
+  box-shadow: none;
+}
+
+.segment button[aria-pressed="true"] {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+/* 棒グラフ。棒は等幅 flex で、軸ラベルは棒と同じ列に置いて中心を揃える */
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 8px 10px 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.bar-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  /* 棒の最大高さ 96px + 軸ラベル（18px + 余白 4px） */
+  height: 118px;
+  border-radius: 4px;
+}
+
+.bar-col-selected {
+  background: var(--color-chip-new-bg);
+}
+
+.bar {
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 14px;
+  background: var(--color-primary);
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+}
+
+.bar-again {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-again);
+}
+
+.bar-today {
+  background: var(--color-primary-soft);
+}
+
+.bar-over {
+  background: var(--color-easy);
+}
+
+.bar-axis {
+  height: 18px;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 18px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.bar-legend {
+  display: flex;
+  gap: 12px;
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.bar-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: -1px;
+  background: var(--color-primary);
+}
+
+.bar-legend-again::before {
+  background: var(--color-again);
+}
+
+/* デッキ別の表。名前列は折り返し、数字列は右寄せで幅を固定 */
+.deck-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.deck-table th,
+.deck-table td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--color-border);
+  text-align: right;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.deck-table thead th {
+  border-top: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.deck-table th[scope="row"] {
+  text-align: left;
+  font-weight: 500;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.deck-table td:nth-child(2) {
+  min-width: 84px;
+}
+
+.deck-table-name {
+  display: block;
+}
+
+.deck-table-count {
+  display: block;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.deck-bar {
+  display: block;
+  height: 4px;
+  margin-bottom: 4px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.deck-bar span {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+}
+
+.deck-table-zero {
+  color: var(--color-muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* 取り消せない操作のボタン。primary（ティール）と間違えないよう赤で縁取る */
 .danger {
   border-color: var(--color-danger);

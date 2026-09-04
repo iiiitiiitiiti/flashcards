@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { shouldAutoBackup, uploadBackup } from "./cloudbackup";
 import { pruneReviewLog, readAllCardNotes, readAllHiddenCards, readAllProgress, readCardNotes, readProgress, upsertDeckCacheEntry } from "./db";
 import { requestPersistentStorage } from "./quota";
-import { isValidId, type Deck } from "./deck";
+import { isValidId, visibleDeck, type Deck } from "./deck";
 import { createDeck } from "./github";
 import { ModalSheet } from "./ModalSheet";
 import { DeckDetailView } from "./DeckDetailView";
@@ -121,12 +121,6 @@ function NavIcon({ tab }: { tab: NavTab }) {
       <path d="M19.4 14a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.3a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-2.8-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.5 13H3a2 2 0 1 1 0-4h.2A1.6 1.6 0 0 0 4.3 6.2l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V2a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 2.8 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.4 1z" />
     </svg>
   );
-}
-
-/** 非表示のカードを取り除いたデッキ。学習にも統計にも、これを使う */
-function visibleDeck(deck: Deck, hiddenIds: Set<string> | undefined): Deck {
-  if (!hiddenIds || hiddenIds.size === 0) return deck;
-  return { ...deck, cards: deck.cards.filter((card) => !hiddenIds.has(card.id)) };
 }
 
 function formatTimestamp(value: number): string {

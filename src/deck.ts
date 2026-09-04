@@ -80,3 +80,9 @@ function validateCard(value: unknown, index: number): asserts value is DeckCard 
     }
   }
 }
+
+/** 非表示のカードを取り除いたデッキ。学習にも統計にも、これを使う */
+export function visibleDeck(deck: Deck, hiddenIds: Set<string> | undefined): Deck {
+  if (!hiddenIds || hiddenIds.size === 0) return deck;
+  return { ...deck, cards: deck.cards.filter((card) => !hiddenIds.has(card.id)) };
+}
