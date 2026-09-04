@@ -1,15 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { readAllHiddenCards, readAllProgress, readAllReviewLog } from "./db";
-import { dayKey } from "./srs";
+import { visibleDeck } from "./deck";
+import { dayKey, formatPercent } from "./srs";
 import {
   buildMonthCells,
+  buildVisibleCardIndex,
+  dueForecast,
   isFutureMonth,
+  monthlyTrend,
   shiftMonth,
   studiedDays,
   summarizeDay,
+  summarizeDecks,
   summarizeTotal,
+  summarizeTrend,
+  tallyByDay,
   type DailyStats,
+  type ForecastDay,
   type TotalStats,
+  type TrendDay,
 } from "./stats";
 import type { DeckSnapshot, ProgressRecord, ReviewLogEntry } from "./types";
 
@@ -18,6 +27,71 @@ interface StatsViewProps {
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS_JA = ["日", "月", "火", "水", "木", "金", "土"];
+
+/** 復習予定はいつも 30 日ぶん数え、7 日表示は先頭を切り出す（切替のたびに進捗全件を走査しない） */
+const FORECAST_DAYS = 30;
+type ForecastSpan = 7 | 30;
+
+/** 棒グラフの棒の最大高さ（px）。軸ラベルのぶんは別に取る */
+const BAR_HEIGHT = 96;
+
+/** 0 は棒を出さず、1 枚でも見えるよう 2px を下限にする */
+function barHeight(value: number, max: number): number {
+  if (value <= 0) return 0;
+  return Math.max(2, Math.round((value / Math.max(1, max)) * BAR_HEIGHT));
+}
+
+/** 月の日別。棒は「正解」の上に「もう一度」を積む。カレンダーで選んだ日は縁取る */
+function TrendChart({ days, selected, label }: { days: TrendDay[]; selected: string; label: string }) {
+  const max = Math.max(...days.map((day) => day.reviewed));
+  const last = days.length;
+  return (
+    <div className="bar-chart" role="img" aria-label={label}>
+      {days.map((day) => {
+        const height = barHeight(day.reviewed, max);
+        const again = day.reviewed === 0 ? 0 : Math.round(((day.reviewed - day.correct) / day.reviewed) * height);
+        // 1・10・20・末日。末日の直前の 30 は末日と重なるので出さない
+        const axis = day.day === 1 || day.day === last || (day.day % 10 === 0 && last - day.day >= 3) ? String(day.day) : "";
+        return (
+          <span key={day.key} className={`bar-col${day.key === selected ? " bar-col-selected" : ""}`}>
+            <span className="bar" style={{ height }}>
+              <span className="bar-again" style={{ height: again }} />
+            </span>
+            <span className="bar-axis">{axis}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 復習予定。今日の棒には期限切れも積まれて突出しやすいので、高さの基準は明日以降の最大値にし、
+ * 今日がそれを超えるときは満杯（濃色）で止める。枚数は見出し下の1行で読む
+ */
+function ForecastChart({ days, span, label }: { days: ForecastDay[]; span: ForecastSpan; label: string }) {
+  const max = Math.max(...days.slice(1).map((day) => day.count));
+  const today = days[0];
+  return (
+    <div className="bar-chart" role="img" aria-label={label}>
+      {days.map((day, offset) => {
+        const over = offset === 0 && day.count > max;
+        const height = over ? BAR_HEIGHT : barHeight(day.count, max);
+        let axis = "";
+        if (offset === 0) axis = "今日";
+        else if (span === 7) axis = WEEKDAYS_JA[new Date(`${day.key}T00:00:00+09:00`).getDay()];
+        else if ((offset + 1) % 10 === 0) axis = day.key.slice(5).replace(/^0/, "").replace("-", "/").replace("/0", "/");
+        return (
+          <span key={day.key} className="bar-col">
+            <span className={`bar${offset === 0 ? " bar-today" : ""}${over ? " bar-over" : ""}`} style={{ height }} title={offset === 0 ? `今日 ${today.count} 枚` : undefined} />
+            <span className="bar-axis">{axis}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function ClockIcon() {
   return (
@@ -87,8 +161,11 @@ export function StatsView({ snapshot }: StatsViewProps) {
   const [logs, setLogs] = useState<ReviewLogEntry[] | null>(null);
   const [records, setRecords] = useState<ProgressRecord[]>([]);
   const [hiddenByDeck, setHiddenByDeck] = useState<Map<string, Set<string>>>(new Map());
-  const today = useMemo(() => dayKey(new Date()), []);
+  /** 開いた時刻。集計の「今」と今日の判定に使う（描画ごとに作り直すと全集計が無効化される） */
+  const now = useMemo(() => new Date(), []);
+  const today = useMemo(() => dayKey(now), [now]);
   const [selected, setSelected] = useState(today);
+  const [forecastSpan, setForecastSpan] = useState<ForecastSpan>(7);
   const [cursor, setCursor] = useState(() => {
     const [year, month] = today.split("-").map(Number);
     return { year, month };
@@ -132,9 +209,24 @@ export function StatsView({ snapshot }: StatsViewProps) {
     [logs, records, deckCardCounts],
   );
 
+  const loading = logs === null;
+  const tally = useMemo(() => tallyByDay(logs ?? []), [logs]);
+  const trend = useMemo(() => monthlyTrend(tally, cursor.year, cursor.month), [tally, cursor]);
+  const trendSummary = useMemo(() => summarizeTrend(trend), [trend]);
+  /** 復習予定とデッキ別の対象。ホームと同じ visibleDeck（非表示を除く） */
+  const decks = useMemo(
+    () => (snapshot?.decks ?? []).map((entry) => visibleDeck(entry.deck, hiddenByDeck.get(entry.deckId))),
+    [snapshot, hiddenByDeck],
+  );
+  const forecast = useMemo(() => dueForecast(records, buildVisibleCardIndex(decks), now, FORECAST_DAYS), [records, decks, now]);
+  const forecastDays = useMemo(() => forecast.days.slice(0, forecastSpan), [forecast, forecastSpan]);
+  const forecastTotal = forecastDays.reduce((sum, day) => sum + day.count, 0);
+  const breakdown = useMemo(() => summarizeDecks(decks, records, now), [decks, records, now]);
+
   const nextMonth = shiftMonth(cursor.year, cursor.month, 1);
   const canGoNext = !isFutureMonth(nextMonth.year, nextMonth.month, new Date());
   const selectedLabel = selected.replace(/-/g, "/");
+  const monthLabel = `${cursor.year}/${String(cursor.month).padStart(2, "0")}`;
 
   return (
     <section>
@@ -197,6 +289,88 @@ export function StatsView({ snapshot }: StatsViewProps) {
         <StatCard label="新規出題カード(枚)" value={daily.newCards} icon={<PlusIcon />} />
       </div>
 
+      <h2>日別の推移（{monthLabel}）</h2>
+      {trendSummary.percent === null ? (
+        !loading && <p className="muted">この月はまだ学習していません。</p>
+      ) : (
+        <>
+          <p className="stats-summary">
+            めくったカード {trendSummary.reviewed.toLocaleString("ja-JP")} 枚・正答率 {trendSummary.percent}%
+          </p>
+          <TrendChart
+            days={trend}
+            selected={selected}
+            label={`${monthLabel} の日別: めくったカード ${trendSummary.reviewed} 枚、正答率 ${trendSummary.percent}%`}
+          />
+          <p className="bar-legend">
+            <span className="bar-legend-correct">正解</span>
+            <span className="bar-legend-again">もう一度</span>
+          </p>
+        </>
+      )}
+
+      <div className="section-head">
+        <h2>復習予定</h2>
+        <div className="segment" role="group" aria-label="期間">
+          {([7, 30] as ForecastSpan[]).map((span) => (
+            <button key={span} type="button" aria-pressed={forecastSpan === span} onClick={() => setForecastSpan(span)}>
+              {span}日
+            </button>
+          ))}
+        </div>
+      </div>
+      {!loading && snapshot === null && <p className="muted">デッキを読み込むと出ます。</p>}
+      {!loading && snapshot !== null && forecastTotal === 0 && (
+        <p className="muted">今日から{forecastSpan}日のあいだに期限が来るカードはありません。</p>
+      )}
+      {!loading && snapshot !== null && forecastTotal > 0 && (
+        <>
+          <p className="stats-summary">
+            期限が来るカード {forecastTotal.toLocaleString("ja-JP")} 枚・いま復習できるのは {forecast.dueNow.toLocaleString("ja-JP")} 枚
+          </p>
+          <ForecastChart
+            days={forecastDays}
+            span={forecastSpan}
+            label={`今日から${forecastSpan}日の復習予定: 合計 ${forecastTotal} 枚、今日 ${forecastDays[0].count} 枚`}
+          />
+        </>
+      )}
+
+      <h2>デッキ別</h2>
+      {!loading && snapshot === null && <p className="muted">デッキを読み込むと出ます。</p>}
+      {!loading && snapshot !== null && breakdown.length === 0 && <p className="muted">デッキがありません。</p>}
+      {!loading && breakdown.length > 0 && (
+        <table className="deck-table">
+          <caption className="visually-hidden">デッキごとの定着率・復習できる枚数・苦手カードの枚数</caption>
+          <thead>
+            <tr>
+              <th scope="col">デッキ</th>
+              <th scope="col">定着率</th>
+              <th scope="col">復習</th>
+              <th scope="col">苦手</th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.map((row) => (
+              <tr key={row.deckId}>
+                <th scope="row">
+                  <span className="deck-table-name">{row.name}</span>
+                  <span className="deck-table-count">{row.cardCount.toLocaleString("ja-JP")}枚</span>
+                </th>
+                <td>
+                  <span className="deck-bar" aria-hidden="true">
+                    <span style={{ width: `${Math.min(100, row.retentionPercent)}%` }} />
+                  </span>
+                  {formatPercent(row.retentionPercent)}%
+                </td>
+                <td className={row.due === 0 ? "deck-table-zero" : undefined}>{row.due.toLocaleString("ja-JP")}</td>
+                <td className={row.weak === 0 ? "deck-table-zero" : undefined}>{row.weak.toLocaleString("ja-JP")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
       <h2>学習状況（全期間）</h2>
       <div className="stat-grid">
         <StatCard label="プレイ時間(分)" value={total.playMinutes} icon={<ClockIcon />} />
@@ -212,6 +386,7 @@ export function StatsView({ snapshot }: StatsViewProps) {
       )}
       <p className="muted stats-note">
         プレイ時間は2026年8月26日以降に学習したぶんだけ記録されます。1枚あたり5分を超えた時間は、席を外したものとして数えません。
+        復習予定とデッキ別は、非表示のカードと消えたデッキを数えません。日別の推移は直近400日の記録から集計し、非表示のカードも含みます。
       </p>
     </section>
   );
