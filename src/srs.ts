@@ -240,6 +240,78 @@ export function buildStudyQueue(
   };
 }
 
+/** 進捗・メモを (デッキ id, カード id) で引くための鍵。デッキをまたぐ学習では cardId だけでは衝突しうる */
+export function progressKey(deckId: string, cardId: string): string {
+  return `${deckId}${cardId}`;
+}
+
+/** 学習セッションの1枚。どのデッキのカードかを持つ（デッキをまたぐ学習で保存先を取り違えない） */
+export interface StudyItem {
+  deckId: string;
+  card: DeckCard;
+  isNew: boolean;
+}
+
+export interface StudyItemsOptions {
+  newCardsPerDay: number;
+  tag: string | null;
+  /** 全デッキ合計で数えるときの、今日すでに使った新規枠 */
+  usedNewCardsToday?: number;
+  focus: StudyFocus;
+  weakSince: number | null;
+  /** 新規を出すか。デッキをまたぐ学習では false（1日の新規上限の数え方が絡む） */
+  includeFresh: boolean;
+}
+
+/**
+ * 複数デッキぶんの出題キューを組み立てる。1デッキで `includeFresh: true` なら `buildStudyQueue` と同じ並び。
+ * 復習は**全デッキ通しで期限の早い順**、苦手は忘れた回数 → 難しさの順、新規はデッキ順で末尾。
+ * 進捗は (deckId, cardId) で引くので、別デッキに同じ id のカードがあっても混ざらない
+ */
+export function buildStudyItems(
+  decks: Deck[],
+  progressRecords: ProgressRecord[],
+  now: Date,
+  options: StudyItemsOptions,
+): { items: StudyItem[]; freshHeldBack: number } {
+  const byDeck = new Map<string, ProgressRecord[]>();
+  for (const record of progressRecords) {
+    const list = byDeck.get(record.deckId);
+    if (list) list.push(record);
+    else byDeck.set(record.deckId, [record]);
+  }
+  const due: { item: StudyItem; dueAt: number }[] = [];
+  const weak: { item: StudyItem; lapses: number; difficulty: number }[] = [];
+  const fresh: StudyItem[] = [];
+  let freshHeldBack = 0;
+  for (const deck of decks) {
+    const records = byDeck.get(deck.id) ?? [];
+    const queue = buildStudyQueue(deck, records, now, options.newCardsPerDay, options.tag, options.usedNewCardsToday, options.focus, options.weakSince);
+    const recordByCard = new Map(records.map((record) => [record.cardId, record]));
+    if (options.focus === "weak") {
+      for (const card of queue.due) {
+        const progress = recordByCard.get(card.id)?.progress;
+        weak.push({ item: { deckId: deck.id, card, isNew: false }, lapses: progress?.lapses ?? 0, difficulty: progress?.difficulty ?? 0 });
+      }
+      continue;
+    }
+    const dueAtByCard = new Map(records.map((record) => [record.cardId, record.progress.due]));
+    for (const card of queue.due) due.push({ item: { deckId: deck.id, card, isNew: false }, dueAt: dueAtByCard.get(card.id) ?? 0 });
+    if (options.includeFresh) {
+      fresh.push(...queue.fresh.map((card) => ({ deckId: deck.id, card, isNew: true })));
+      freshHeldBack += queue.freshHeldBack;
+    }
+  }
+  if (options.focus === "weak") {
+    // デッキごとの並びを全デッキ通しに直す（忘れた回数 → 難しさ）
+    weak.sort((left, right) => right.lapses - left.lapses || right.difficulty - left.difficulty);
+    return { items: weak.map((entry) => entry.item), freshHeldBack: 0 };
+  }
+  // 同じ期限なら元の順（デッキ順）を保つ
+  due.sort((left, right) => left.dueAt - right.dueAt);
+  return { items: [...due.map((entry) => entry.item), ...fresh], freshHeldBack };
+}
+
 /** 苦手判定に使う「出しても定着しない」回数。既定の学習ステップは2つなので、3回以上で Review に届いていなければ躓いている */
 export const WEAK_MIN_REPS = 3;
 /** これ以上の間隔が付いたカードは「身についた」とみなし、過去に忘れていても苦手から外す（Anki の mature と同じ 21 日） */

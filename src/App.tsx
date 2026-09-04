@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { shouldAutoBackup, uploadBackup } from "./cloudbackup";
-import { pruneReviewLog, readAllHiddenCards, readAllProgress, readCardNotes, readProgress, upsertDeckCacheEntry } from "./db";
+import { pruneReviewLog, readAllCardNotes, readAllHiddenCards, readAllProgress, readCardNotes, readProgress, upsertDeckCacheEntry } from "./db";
 import { requestPersistentStorage } from "./quota";
 import { isValidId, type Deck } from "./deck";
 import { createDeck } from "./github";
@@ -11,7 +11,7 @@ import { DECK_SORTS, filterDecks, sortDecks, type DeckListItem, type DeckSort } 
 import { invalidateSnapshotFetches, loadCachedSnapshot, refreshSnapshot } from "./snapshot";
 import { resumePendingDeckDeletions } from "./deckcleanup";
 import { moveTargets } from "./deckedit";
-import { buildStudyQueue, countIntroducedToday, formatPercent, retentionPercent } from "./srs";
+import { buildStudyItems, buildStudyQueue, countIntroducedToday, formatPercent, progressKey, retentionPercent } from "./srs";
 import {
   loadAutoCloudBackup,
   loadDeckSort,
@@ -43,6 +43,9 @@ import type { DeckCacheEntry, DeckSnapshot, ProgressRecord, StudyFocus, StudyMod
 /** 学習終了からバックアップ開始までの待ち。統計の再計算（進捗の全件読み）と重ねない */
 const AUTO_BACKUP_DELAY_MS = 2_000;
 
+/** 「まとめて学習」（全デッキ）を表す開始シートの対象 id。デッキ id の規約（`isValidId`）を満たさないので実デッキと衝突しない */
+const ALL_DECKS = "__all__";
+
 interface DeckStats {
   due: number;
   fresh: number;
@@ -69,7 +72,8 @@ type View =
   | { type: "home" }
   | {
       type: "study";
-      deckId: string;
+      /** 学習するデッキ。2つ以上なら「まとめて学習」 */
+      deckIds: string[];
       progress: ProgressRecord[];
       mode: StudyMode;
       sessionSize: SessionSize;
@@ -326,28 +330,61 @@ export function App() {
     };
   }, [refresh, updateStats]);
 
-  const startingDeck = useMemo(() => {
-    if (startingDeckId === null) return null;
-    const entry = snapshot?.decks.find((candidate) => candidate.deckId === startingDeckId);
-    return entry ? visibleDeck(entry.deck, hidden.get(startingDeckId)) : null;
-  }, [snapshot, startingDeckId, hidden]);
+  /** 非表示のカードを除いた全デッキ。「まとめて学習」と学習画面で使う（参照を固定し、キューの作り直しを抑える） */
+  const sessionDecks = useMemo(
+    () => (snapshot ? snapshot.decks.map((entry) => visibleDeck(entry.deck, hidden.get(entry.deckId))) : []),
+    [snapshot, hidden],
+  );
+  const allDecks = useMemo(() => snapshot?.decks.map((entry) => entry.deck) ?? [], [snapshot]);
+  const startingAll = startingDeckId === ALL_DECKS;
 
-  /** 開始シートに出すタグ一覧。カード一覧の絞り込みと同じ並び（日本語順） */
+  /** 開始シートが対象にするデッキ。「まとめて学習」なら全デッキ */
+  const startingDecks = useMemo(() => {
+    if (startingDeckId === null) return [];
+    if (startingDeckId === ALL_DECKS) return sessionDecks;
+    const deck = sessionDecks.find((candidate) => candidate.id === startingDeckId);
+    return deck ? [deck] : [];
+  }, [startingDeckId, sessionDecks]);
+
+  /** 「まとめて学習」でいま復習できるカード（タグ絞り込み前）。タグ候補と枚数の両方に使う */
+  const startingAllItems = useMemo(() => {
+    if (!startingAll || startProgress === null) return null;
+    return buildStudyItems(startingDecks, startProgress, new Date(), {
+      newCardsPerDay: loadNewCardsPerDay(),
+      tag: null,
+      focus: "all",
+      weakSince: null,
+      includeFresh: false,
+    }).items;
+  }, [startingAll, startingDecks, startProgress]);
+
+  /**
+   * 開始シートに出すタグ一覧。1デッキならそのデッキの全タグ（カード一覧の絞り込みと同じ並び）。
+   * 「まとめて学習」では**いま復習できるカードに付いているタグ**だけ（185 種を全部並べない。選んで 0 枚になる候補も出ない）
+   */
   const startTags = useMemo(() => {
-    if (!startingDeck) return [];
     const tags = new Set<string>();
-    for (const card of startingDeck.cards) {
-      for (const tag of card.tags ?? []) tags.add(tag);
+    if (startingAll) {
+      for (const item of startingAllItems ?? []) for (const tag of item.card.tags ?? []) tags.add(tag);
+    } else {
+      for (const deck of startingDecks) for (const card of deck.cards) for (const tag of card.tags ?? []) tags.add(tag);
     }
     return [...tags].sort((left, right) => left.localeCompare(right, "ja"));
-  }, [startingDeck]);
+  }, [startingAll, startingAllItems, startingDecks]);
 
   /** 選んでいるタグでいま学習できる枚数。進捗を読み終えるまでは null */
   const startCounts = useMemo(() => {
-    if (!startingDeck || startProgress === null) return null;
-    const queue = buildStudyQueue(startingDeck, startProgress, new Date(), loadNewCardsPerDay(), startTag, usedNewCardsToday, startFocus);
+    if (startingDecks.length === 0 || startProgress === null) return null;
+    if (startingAll) {
+      const items = (startingAllItems ?? []).filter((item) => startTag === null || (item.card.tags ?? []).includes(startTag));
+      return { due: items.length, fresh: 0 };
+    }
+    const queue = buildStudyQueue(startingDecks[0], startProgress, new Date(), loadNewCardsPerDay(), startTag, usedNewCardsToday, startFocus);
     return { due: queue.due.length, fresh: queue.fresh.length };
-  }, [startingDeck, startProgress, startTag, startFocus, usedNewCardsToday]);
+  }, [startingAll, startingAllItems, startingDecks, startProgress, startTag, startFocus, usedNewCardsToday]);
+
+  /** 全デッキでいま復習できる枚数（ホームの「まとめて学習」に出す）。統計と同じ visibleDeck 基準 */
+  const totalDue = useMemo(() => [...stats.values()].reduce((total, entry) => total + entry.due, 0), [stats]);
 
   const deckItems = useMemo<(DeckListItem & { entry: DeckCacheEntry })[]>(() => {
     if (!snapshot) return [];
@@ -430,6 +467,8 @@ export function App() {
    * （ホームへ戻らずに「つづける」で再開する経路があるため、stats の値は当てにできない）
    */
   const readStudyContext = useCallback(async (deckId: string) => {
+    // 「まとめて学習」は新規を出さないので、新規枠の数え方は関係ない
+    if (deckId === ALL_DECKS) return { progress: await readAllProgress(), used: undefined };
     if (loadNewCardsScope() === "deck") {
       return { progress: await readProgress(deckId), used: undefined };
     }
@@ -448,23 +487,28 @@ export function App() {
     tag: string | null,
     focus: StudyFocus,
     weakSince: number | null,
+    /** 開始シートで既に読んだ進捗。あれば読み直さない（全デッキぶんを2回読まない） */
+    preloaded: ProgressRecord[] | null = null,
   ) {
-    // 次回の既定値として選択を覚えておく（タグだけはデッキごとに覚える）
+    // 次回の既定値として選択を覚えておく（タグだけはデッキごとに覚える。まとめて学習では覚えない）
     saveStudyMode(mode);
     saveSessionSize(sessionSize);
     saveStudyOrder(order);
-    saveStudyTag(deckId, tag);
+    if (deckId !== ALL_DECKS) saveStudyTag(deckId, tag);
     setStartingDeckId(null);
-    const { progress, used } = await readStudyContext(deckId);
-    const notes = new Map((await readCardNotes(deckId)).map((note) => [note.cardId, note.text]));
+    const all = deckId === ALL_DECKS;
+    const { progress, used } = preloaded !== null && all ? { progress: preloaded, used: undefined } : await readStudyContext(deckId);
+    const noteRows = all ? await readAllCardNotes() : await readCardNotes(deckId);
+    const notes = new Map(noteRows.map((note) => [progressKey(note.deckId, note.cardId), note.text]));
+    const deckIds = all ? (snapshot?.decks.map((entry) => entry.deckId) ?? []) : [deckId];
     setUsedNewCardsToday(used);
     setSessionId((id) => id + 1);
-    setView({ type: "study", deckId, progress, mode, sessionSize, order, tag, focus, weakSince, notes, sessionId: sessionId + 1 });
+    setView({ type: "study", deckIds, progress, mode, sessionSize, order, tag, focus, weakSince, notes, sessionId: sessionId + 1 });
   }
 
-  /** 学習開始シートを開く。タグの初期値は前回の選択（デッキに無いタグなら「全タグ」） */
+  /** 学習開始シートを開く。タグの初期値は前回の選択（デッキに無いタグなら「全タグ」）。まとめて学習は常に「全タグ」 */
   function openStartSheet(deckId: string, deckTags: string[]) {
-    const remembered = loadStudyTag(deckId);
+    const remembered = deckId === ALL_DECKS ? null : loadStudyTag(deckId);
     setStartTag(remembered !== null && deckTags.includes(remembered) ? remembered : null);
     setStartFocus("all");
     setStartProgress(null);
@@ -478,7 +522,7 @@ export function App() {
   function closeStudy(restart: boolean) {
     if (restart && view.type === "study") {
       // 同じ設定のまま、最新の進捗でセッションを組み直す
-      void startStudy(view.deckId, view.mode, view.sessionSize, view.order, view.tag, view.focus, view.weakSince);
+      void startStudy(view.deckIds.length > 1 ? ALL_DECKS : view.deckIds[0], view.mode, view.sessionSize, view.order, view.tag, view.focus, view.weakSince);
       return;
     }
     setView({ type: "home" });
@@ -594,13 +638,15 @@ export function App() {
   }
 
   if (view.type === "study" && snapshot) {
-    const entry = snapshot.decks.find((candidate) => candidate.deckId === view.deckId);
-    if (entry) {
+    // 学習中に消えたデッキは外す。全部消えていたらホームへ落ちる
+    const studyDecks = sessionDecks.filter((deck) => view.deckIds.includes(deck.id));
+    if (studyDecks.length > 0) {
       return (
         <main className="app study-app">
           <StudyView
             key={view.sessionId}
-            deck={visibleDeck(entry.deck, hidden.get(view.deckId))}
+            decks={studyDecks}
+            title={studyDecks.length > 1 ? "まとめて学習" : studyDecks[0].name}
             initialProgress={view.progress}
             mode={view.mode}
             sessionSize={view.sessionSize}
@@ -612,12 +658,15 @@ export function App() {
             initialNotes={view.notes}
             canEditCards={loadToken() !== ""}
             onDeckUpdated={applyDeckUpdates}
-            moveTargets={moveTargets(entry.deck, snapshot.decks.map((candidate) => candidate.deck))}
-            onHide={(cardId) => {
+            moveTargetsFor={(deckId) => {
+              const deck = allDecks.find((candidate) => candidate.id === deckId);
+              return deck ? moveTargets(deck, allDecks) : [];
+            }}
+            onHide={(deckId, cardId) => {
               // 統計とホームの枚数を作り直す。学習中の表示はセッション側が更新済み
               setHidden((previous) => {
                 const next = new Map(previous);
-                next.set(view.deckId, new Set([...(previous.get(view.deckId) ?? []), cardId]));
+                next.set(deckId, new Set([...(previous.get(deckId) ?? []), cardId]));
                 return next;
               });
             }}
@@ -673,6 +722,14 @@ export function App() {
           ))}
           {backupNotice && <p className="notice warning">{backupNotice} 設定画面で確認してください。</p>}
           {snapshot.decks.length === 0 && !snapshot.offline && <p className="muted">デッキがありません。decks/ に JSON を追加してください。</p>}
+          {snapshot.decks.length > 0 && (
+            <div className="study-all">
+              <button type="button" className="primary" disabled={totalDue === 0} onClick={() => openStartSheet(ALL_DECKS, [])}>
+                まとめて学習
+              </button>
+              <span className="muted">{totalDue > 0 ? `全デッキで復習できるのは ${totalDue} 枚` : "いま復習できるカードはありません"}</span>
+            </div>
+          )}
           {snapshot.decks.length > 0 && <h2>マイデッキ</h2>}
           {snapshot.decks.length > 0 && (
             <div className="deck-toolbar">
@@ -728,7 +785,7 @@ export function App() {
       {startingDeckId !== null && (
         <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="学習を開始">
           <div className="sheet">
-            <h2>学習を開始</h2>
+            <h2>{startingAll ? "まとめて学習" : "学習を開始"}</h2>
             <div className="sheet-field">
               <span className="sheet-label">モード</span>
               <div className="segmented">
@@ -751,6 +808,7 @@ export function App() {
                 </button>
               </div>
             </div>
+            {!startingAll && (
             <div className="sheet-field">
               <span className="sheet-label">範囲</span>
               <div className="segmented">
@@ -762,6 +820,7 @@ export function App() {
                 </button>
               </div>
             </div>
+            )}
             <div className="sheet-field">
               <span className="sheet-label">枚数</span>
               <div className="segmented">
@@ -783,7 +842,14 @@ export function App() {
                 </select>
               </div>
             )}
-            {startCounts !== null && startFocus === "all" && (
+            {startCounts !== null && startingAll && (
+              <p className="muted sheet-counts">
+                {startTag === null ? "全デッキで" : `「${startTag}」で`}いま復習できるのは
+                <strong> {startCounts.due} 枚 </strong>
+                です。新規カードは出しません。
+              </p>
+            )}
+            {startCounts !== null && !startingAll && startFocus === "all" && (
               <p className="muted sheet-counts">
                 {startTag === null ? "このデッキで" : `「${startTag}」で`}いま学習できるのは
                 <strong> 復習 {startCounts.due} 枚・新規 {startCounts.fresh} 枚 </strong>
@@ -802,7 +868,9 @@ export function App() {
               {startMode === "buzzer"
                 ? "問題文が1文字ずつ表示されます。押した時点で止まり、答え合わせは自己申告です。"
                 : "答えを表示したあと、左スワイプで「もう一度」、右スワイプは答えるまでの速さで自動評価します。"}
-              {startFocus === "weak"
+              {startingAll
+                ? `全デッキの復習カードを${startOrder === "random" ? "ランダムに" : "期限が近い順に"}出します。カードにはデッキ名を添えます。`
+                : startFocus === "weak"
                 ? `苦手カードを期限前でも出します（次回の間隔は今日から数え直します）。${startOrder === "random" ? "順番はランダムです。" : "忘れた回数が多い順です。"}`
                 : startOrder === "random"
                   ? "出題順はデッキ全体からランダムに選びます。"
@@ -813,7 +881,9 @@ export function App() {
                 type="button"
                 className="primary"
                 disabled={startCounts !== null && startCounts.due + startCounts.fresh === 0}
-                onClick={() => void startStudy(startingDeckId, startMode, startSize, startOrder, startTag, startFocus, startFocus === "weak" ? Date.now() : null)}
+                onClick={() =>
+                  void startStudy(startingDeckId, startMode, startSize, startOrder, startTag, startFocus, startFocus === "weak" ? Date.now() : null, startProgress)
+                }
               >
                 開始
               </button>

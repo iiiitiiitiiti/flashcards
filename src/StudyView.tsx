@@ -5,7 +5,7 @@ import { buildCard, upsertCard, type CardForm } from "./deckedit";
 import { moveCardBetweenDecks, writeDeck } from "./github";
 import { moveCardLocalData, saveCardNote, saveReview, setCardHidden, undoReview } from "./db";
 import { describeStorageError } from "./quota";
-import { buildStudyQueue, countIntroducedToday, dayKey, formatInterval, previewIntervals, rate, ratingFromElapsed, retentionPercent, shuffled } from "./srs";
+import { buildStudyItems, countIntroducedToday, dayKey, formatInterval, previewIntervals, progressKey, rate, ratingFromElapsed, retentionPercent, shuffled, type StudyItem } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds, loadToken } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
 import { splitGraphemes } from "./text";
@@ -13,8 +13,11 @@ import { useVisibleViewport } from "./viewport";
 import type { ProgressRecord, ReviewRating, StudyFocus, StudyMode, StudyOrder } from "./types";
 
 interface StudyViewProps {
-  deck: Deck;
-  /** 学習開始時点の進捗。セッション中は外部更新を反映しない（スナップショット固定） */
+  /** 学習するデッキ。2つ以上ならデッキをまたぐ学習（新規は出さず、カードにデッキ名を添える） */
+  decks: Deck[];
+  /** 見出し。1デッキならデッキ名、またぐときは「まとめて学習」 */
+  title: string;
+  /** 学習開始時点の進捗（全デッキぶん）。セッション中は外部更新を反映しない（スナップショット固定） */
   initialProgress: ProgressRecord[];
   /** 通常学習か早押しクイズか */
   mode: StudyMode;
@@ -30,16 +33,16 @@ interface StudyViewProps {
   weakSince?: number | null;
   /** 全デッキ合計で数えるときの、開始時点で使った新規枠。デッキごとの設定なら undefined */
   usedNewCardsToday?: number;
-  /** カードごとの自分のメモ（カード id → 本文）。開始時点のスナップショット */
+  /** カードごとの自分のメモ（`progressKey(deckId, cardId)` → 本文）。開始時点のスナップショット */
   initialNotes: Map<string, string>;
   /** カードを非表示にしたときに親へ伝える（一覧と統計を作り直すため） */
-  onHide: (cardId: string) => void;
+  onHide: (deckId: string, cardId: string) => void;
   /** カードを直せるか（GitHub トークンがあるか）。カード一覧と同じ扱い */
   canEditCards: boolean;
   /** カードを編集して GitHub へ保存したときに親へ伝える（一覧とキャッシュを更新するため）。移動では移動先・元の2つを渡す */
   onDeckUpdated: (...decks: Deck[]) => void;
-  /** カードの移動先にできるデッキ（`moveTargets`）。省略なら移動できない */
-  moveTargets?: Deck[];
+  /** そのデッキのカードの移動先にできるデッキ（`moveTargets`）。省略なら移動できない */
+  moveTargetsFor?: (deckId: string) => Deck[];
   /** 学習を終える。restart が true なら同じ設定でもう一度始める */
   onClose: (restart: boolean) => void;
 }
@@ -98,9 +101,12 @@ const MAX_ELAPSED_MS = 5 * 60 * 1000;
  */
 const BUZZER_LEAD_IN_MS = 450;
 
-interface QueueItem {
-  card: DeckCard;
-  isNew: boolean;
+/** キューの1枚。どのデッキのカードかを持つ（デッキをまたぐ学習で保存先を取り違えない） */
+type QueueItem = StudyItem;
+
+/** 進捗・メモ・キュー操作の鍵。同じ id のカードが別デッキにあっても混ぜない */
+function keyOf(item: { deckId: string; card: { id: string } }): string {
+  return progressKey(item.deckId, item.card.id);
 }
 
 /** 評価を取り消すために控えておく1回ぶん。セッションを離れると消える */
@@ -114,9 +120,9 @@ interface UndoEntry {
   elapsedMs: number;
 }
 
-/** キューの末尾に足した再出題を1つだけ取り除く */
-function withoutLastAppearance(items: QueueItem[], cardId: string): QueueItem[] {
-  const index = items.map((item) => item.card.id).lastIndexOf(cardId);
+/** キューの末尾に足した再出題を1つだけ取り除く（同じ id が別デッキにあっても取り違えない） */
+function withoutLastAppearance(items: QueueItem[], key: string): QueueItem[] {
+  const index = items.map((item) => keyOf(item)).lastIndexOf(key);
   return index === -1 ? items : [...items.slice(0, index), ...items.slice(index + 1)];
 }
 
@@ -138,17 +144,24 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag, focus = "all", weakSince = null, usedNewCardsToday, initialNotes, canEditCards, onHide, onDeckUpdated, onClose, moveTargets = [] }: StudyViewProps) {
+export function StudyView({ decks, title, initialProgress, mode, sessionSize, order, tag, focus = "all", weakSince = null, usedNewCardsToday, initialNotes, canEditCards, onHide, onDeckUpdated, onClose, moveTargetsFor = () => [] }: StudyViewProps) {
+  const multiDeck = decks.length > 1;
+  /** deckId → Deck。見出し・編集フォーム・デッキ名ラベルで使う */
+  const deckOf = (deckId: string): Deck => decks.find((candidate) => candidate.id === deckId) ?? decks[0];
   const initialQueue = useMemo<QueueItem[]>(() => {
-    const queue = buildStudyQueue(deck, initialProgress, new Date(), loadNewCardsPerDay(), tag, usedNewCardsToday, focus, weakSince);
-    const items = [
-      ...queue.due.map((card) => ({ card, isNew: false })),
-      ...queue.fresh.map((card) => ({ card, isNew: true })),
-    ];
+    // デッキをまたぐときは新規を出さない（1日の新規上限の数え方が絡む）
+    const { items } = buildStudyItems(decks, initialProgress, new Date(), {
+      newCardsPerDay: loadNewCardsPerDay(),
+      tag,
+      usedNewCardsToday,
+      focus,
+      weakSince,
+      includeFresh: !multiDeck,
+    });
     // ランダムはデッキ全体から無作為に選びたいので、枚数で切る前にシャッフルする
     // 選んだ枚数でセッションを打ち切る（「もう一度」の再出題はこの上限に含めない）
     return (order === "random" ? shuffled(items) : items).slice(0, sessionSize);
-  }, [deck, initialProgress, sessionSize, order, tag, focus, weakSince, usedNewCardsToday]);
+  }, [decks, multiDeck, initialProgress, sessionSize, order, tag, focus, weakSince, usedNewCardsToday]);
 
   /** 開始時点でこのデッキが使っていた新規枠。セッション中の増分を差し引くのに使う */
   const introducedAtStart = useMemo(() => countIntroducedToday(initialProgress, new Date()), [initialProgress]);
@@ -166,16 +179,16 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   /** カード id → 自分のメモ。書き換えたらこの Map を差し替える */
   const [notes, setNotes] = useState<Map<string, string>>(initialNotes);
   /** メモ入力を開いているカード。null なら閉じている */
-  const [noteEditing, setNoteEditing] = useState<{ cardId: string; text: string } | null>(null);
-  /** 非表示の確認を出しているカード */
-  const [hideTarget, setHideTarget] = useState<string | null>(null);
+  const [noteEditing, setNoteEditing] = useState<{ deckId: string; cardId: string; text: string } | null>(null);
+  /** 非表示の確認を出しているカード（開いた時点のデッキも控える。保存までに current が進んでも取り違えない） */
+  const [hideTarget, setHideTarget] = useState<{ deckId: string; cardId: string } | null>(null);
   /** 編集ダイアログを開いているカード。null なら閉じている */
-  const [editingCard, setEditingCard] = useState<DeckCard | null>(null);
+  const [editingCard, setEditingCard] = useState<{ deckId: string; card: DeckCard } | null>(null);
 
   /** 取り消せる評価。新しいものが末尾（押すたびに1つずつ戻る） */
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   // セッション中の最新進捗（評価済みカードの再出題に使う）
-  const progressRef = useRef(new Map(initialProgress.map((record) => [record.cardId, record])));
+  const progressRef = useRef(new Map(initialProgress.map((record) => [progressKey(record.deckId, record.cardId), record])));
   // 評価の多重実行を止める。state の saving は再レンダーまで false のままなので排他にならない
   const ratingLockRef = useRef(false);
   // 設定はセッション開始時の値で固定する（学習中に変わらない）
@@ -209,6 +222,43 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   }, []);
 
   const current = queue[0];
+
+  /**
+   * 結果画面に出す定着率と「まだ出せるカードが残っているか」。
+   * 全カード × 全進捗を走査するので、描画ごとではなく結果画面に入ったとき・評価が変わったときだけ計算する
+   */
+  const resultInfo = useMemo(() => {
+    if (result === null) return null;
+    const now = new Date();
+    const records = [...progressRef.current.values()];
+    // 外から来た値は「開始時点」のもの。このセッションで導入したぶんを足さないと枠を多く見積もる
+    const used =
+      usedNewCardsToday === undefined
+        ? undefined
+        : usedNewCardsToday + countIntroducedToday(records, now) - introducedAtStart;
+    const rest = buildStudyItems(decks, records, now, {
+      newCardsPerDay: loadNewCardsPerDay(),
+      tag,
+      usedNewCardsToday: used,
+      focus,
+      weakSince,
+      includeFresh: !multiDeck,
+    });
+    // デッキ全体の定着率。セッション中の評価も progressRef に入っているので最新の値になる。
+    // デッキをまたぐときは分母が全カード（数万枚）になって意味を失うので出さない
+    let percent: number | null = null;
+    if (!multiDeck) {
+      const deck = decks[0];
+      const phases = deck.cards.map((card) => {
+        const progress = progressRef.current.get(progressKey(deck.id, card.id))?.progress;
+        return { reps: progress?.reps ?? 0, state: progress?.state ?? 0 };
+      });
+      percent = retentionPercent(phases, deck.cards.length);
+    }
+    return { percent, remaining: rest.items.length };
+    // reviewedCount と undoStack.length で「評価・取り消しのたび」に作り直す
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, reviewedCount, undoStack.length, decks, multiDeck, tag, focus, weakSince, usedNewCardsToday, introducedAtStart]);
 
   // 早押し: 問題文を1文字ずつ送り、押した時点で止める
   const buzzerChars = useMemo(() => (current ? splitGraphemes(current.card.front) : []), [current]);
@@ -381,12 +431,12 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   }
 
   // 右上に出す現在のフェーズ（FSRS の reps）
-  const currentPhase = current ? (progressRef.current.get(current.card.id)?.progress.reps ?? 0) : 0;
+  const currentPhase = current ? (progressRef.current.get(keyOf(current))?.progress.reps ?? 0) : 0;
 
   const progressPercent = reviewedCount + queue.length === 0 ? 100 : Math.round((reviewedCount / (reviewedCount + queue.length)) * 100);
 
   const intervals = useMemo(
-    () => (current && revealed ? previewIntervals(progressRef.current.get(current.card.id)?.progress ?? null, new Date()) : null),
+    () => (current && revealed ? previewIntervals(progressRef.current.get(keyOf(current))?.progress ?? null, new Date()) : null),
     [current, revealed],
   );
 
@@ -396,13 +446,14 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     setNoteEditing(null);
     if (!editing) return;
     const text = editing.text.trim();
-    if ((notes.get(editing.cardId) ?? "") === text) return;
+    const key = progressKey(editing.deckId, editing.cardId);
+    if ((notes.get(key) ?? "") === text) return;
     try {
-      await saveCardNote(deck.id, editing.cardId, text);
+      await saveCardNote(editing.deckId, editing.cardId, text);
       setNotes((previous) => {
         const next = new Map(previous);
-        if (text === "") next.delete(editing.cardId);
-        else next.set(editing.cardId, text);
+        if (text === "") next.delete(key);
+        else next.set(key, text);
         return next;
       });
     } catch (error) {
@@ -421,18 +472,18 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     setSaving(true);
     setError(null);
     try {
-      await undoReview(deck.id, entry.item.card.id, entry.previous, entry.reviewId);
+      await undoReview(entry.item.deckId, entry.item.card.id, entry.previous, entry.reviewId);
     } catch (error) {
       setError(describeStorageError(error, "評価の取り消しを保存"));
       setSaving(false);
       ratingLockRef.current = false;
       return;
     }
-    if (entry.previous) progressRef.current.set(entry.item.card.id, entry.previous);
-    else progressRef.current.delete(entry.item.card.id);
+    if (entry.previous) progressRef.current.set(keyOf(entry.item), entry.previous);
+    else progressRef.current.delete(keyOf(entry.item));
     setQueue((items) => {
       // 「もう一度」で末尾へ足した再出題を先に取り除いてから、先頭へ戻す
-      const rest = entry.rating === 1 ? withoutLastAppearance(items, entry.item.card.id) : items;
+      const rest = entry.rating === 1 ? withoutLastAppearance(items, keyOf(entry.item)) : items;
       return [entry.item, ...rest];
     });
     setSessionLog((log) => log.slice(1));
@@ -457,17 +508,19 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
   async function saveCard(form: CardForm, targetDeckId: string): Promise<{ ok: boolean; message?: string }> {
     const target = editingCard;
     if (!target) return { ok: false };
-    const card = buildCard(target.id, form);
-    if (targetDeckId !== deck.id) return moveCard(card, targetDeckId);
+    const card = buildCard(target.card.id, form);
+    const deckId = target.deckId;
+    if (targetDeckId !== deckId) return moveCard(deckId, card, targetDeckId);
     try {
-      const next = await writeDeck(deck.id, loadToken(), `deck(${deck.id}): edit card ${card.id}`, (latest) =>
+      const next = await writeDeck(deckId, loadToken(), `deck(${deckId}): edit card ${card.id}`, (latest) =>
         upsertCard(latest, card),
       );
       if (!mountedRef.current) return { ok: true };
-      // 同じカードがキューに複数あることがある（「もう一度」の再出題）ので、全部差し替える
-      setQueue((items) => items.map((item) => (item.card.id === card.id ? { ...item, card } : item)));
+      // 同じカードがキューに複数あることがある（「もう一度」の再出題）ので、全部差し替える。別デッキの同じ id は触らない
+      const key = progressKey(deckId, card.id);
+      setQueue((items) => items.map((item) => (keyOf(item) === key ? { ...item, card } : item)));
       setUndoStack((stack) =>
-        stack.map((entry) => (entry.item.card.id === card.id ? { ...entry, item: { ...entry.item, card } } : entry)),
+        stack.map((entry) => (keyOf(entry.item) === key ? { ...entry, item: { ...entry.item, card } } : entry)),
       );
       // 表示中のカードを差し替えると計測がやり直しになるので、経過時間を引き継ぐ
       restoreElapsedRef.current = Date.now() - shownAt;
@@ -483,44 +536,46 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
    * カードを別デッキへ移す。GitHub（正本）を先に済ませ、そのあと端末側の進捗・メモ・非表示を移す。
    * このデッキのカードではなくなるので、非表示と同じくキューから抜く（評価はしない）
    */
-  async function moveCard(card: DeckCard, targetDeckId: string): Promise<{ ok: boolean; message?: string }> {
-    let decks: { from: Deck; to: Deck };
+  async function moveCard(fromDeckId: string, card: DeckCard, targetDeckId: string): Promise<{ ok: boolean; message?: string }> {
+    let moved: { from: Deck; to: Deck };
     try {
-      decks = await moveCardBetweenDecks(deck.id, targetDeckId, loadToken(), card);
+      moved = await moveCardBetweenDecks(fromDeckId, targetDeckId, loadToken(), card);
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : "移動に失敗しました。" };
     }
     let localMessage: string | null = null;
     try {
-      await moveCardLocalData(deck.id, targetDeckId, card.id);
+      await moveCardLocalData(fromDeckId, targetDeckId, card.id);
     } catch (error) {
       // GitHub 側は移動済み。進捗だけ元デッキに残るので、その旨を伝える（次の学習では新規カードとして出る）
       localMessage = error instanceof Error ? error.message : "学習進捗を移せませんでした。";
     }
     if (!mountedRef.current) return { ok: true };
-    setQueue((items) => items.filter((item) => item.card.id !== card.id));
-    setUndoStack((stack) => stack.filter((entry) => entry.item.card.id !== card.id));
+    const key = progressKey(fromDeckId, card.id);
+    setQueue((items) => items.filter((item) => keyOf(item) !== key));
+    setUndoStack((stack) => stack.filter((entry) => keyOf(entry.item) !== key));
     setRevealed(false);
     setShownAt(Date.now());
     setShownChars(0);
     setBuzzedAt(null);
     setEditingCard(null);
     if (localMessage) setError(`カードは移動しましたが、${localMessage}`);
-    onDeckUpdated(decks.to, decks.from);
+    onDeckUpdated(moved.to, moved.from);
     return { ok: true };
   }
 
   /** 出題から外す。評価はせず、そのカードをキューから抜くだけ（進捗は残す） */
-  async function hideCard(cardId: string) {
+  async function hideCard(target: { deckId: string; cardId: string }) {
     setHideTarget(null);
     try {
-      await setCardHidden(deck.id, cardId, true);
+      await setCardHidden(target.deckId, target.cardId, true);
     } catch (error) {
       setError(describeStorageError(error, "非表示に"));
       return;
     }
-    onHide(cardId);
-    setQueue((items) => items.filter((item) => item.card.id !== cardId));
+    onHide(target.deckId, target.cardId);
+    const key = progressKey(target.deckId, target.cardId);
+    setQueue((items) => items.filter((item) => keyOf(item) !== key));
     setRevealed(false);
     setShownAt(Date.now());
     setShownChars(0);
@@ -565,9 +620,9 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     setSaving(true);
     setError(null);
     const now = new Date();
-    const existing = progressRef.current.get(target.card.id);
+    const existing = progressRef.current.get(keyOf(target));
     const record: ProgressRecord = {
-      deckId: deck.id,
+      deckId: target.deckId,
       cardId: target.card.id,
       progress: rate(existing?.progress ?? null, rating, now),
       introducedDayKey: existing?.introducedDayKey ?? dayKey(now),
@@ -580,7 +635,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
       // 評価の瞬間に進捗とログを保存する（画面遷移やアニメを待たない）
       await saveReview(record, {
         reviewId,
-        deckId: deck.id,
+        deckId: target.deckId,
         cardId: target.card.id,
         rating,
         reviewedAt: now.getTime(),
@@ -597,10 +652,11 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     // 飛び切る前にキューを進めると、カードが一瞬戻ってから消えてしまう
     if (animation) await animation;
     if (!mountedRef.current) return;
-    progressRef.current.set(target.card.id, record);
+    progressRef.current.set(keyOf(target), record);
     setSessionLog((log) => [
       {
         cardId: target.card.id,
+        deckName: multiDeck ? deckOf(target.deckId).name : undefined,
         front: target.card.front,
         back: target.card.back,
         rating,
@@ -615,7 +671,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     setQueue((items) => {
       const rest = items.slice(1);
       // 「もう一度」はセッション末尾に再出題する
-      return rating === 1 ? [...rest, { card: target.card, isNew: false }] : rest;
+      return rating === 1 ? [...rest, { deckId: target.deckId, card: target.card, isNew: false }] : rest;
     });
     setRevealed(false);
     setFlying(false);
@@ -642,7 +698,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
             ←
           </button>
         )}
-        <h1>{deck.name}{mode === "buzzer" ? "（早押し）" : ""}</h1>
+        <h1>{title}{mode === "buzzer" ? "（早押し）" : ""}</h1>
       </div>
       <div
         className="progress-track"
@@ -674,30 +730,16 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
     );
   }
 
-  if (result !== null) {
-    // デッキ全体の定着率。セッション中の評価も progressRef に入っているので最新の値になる
-    const phases = deck.cards.map((card) => {
-      const progress = progressRef.current.get(card.id)?.progress;
-      return { reps: progress?.reps ?? 0, state: progress?.state ?? 0 };
-    });
+  if (result !== null && resultInfo !== null) {
     const phaseGain = sessionLog.reduce((total, entry) => total + (entry.toPhase - entry.fromPhase), 0);
-    // 評価回数ではなく、いま出せるカードが残っているかで判定する
-    const now = new Date();
-    const current = [...progressRef.current.values()];
-    // 外から来た値は「開始時点」のもの。このセッションで導入したぶんを足さないと枠を多く見積もる
-    const used =
-      usedNewCardsToday === undefined
-        ? undefined
-        : usedNewCardsToday + countIntroducedToday(current, now) - introducedAtStart;
-    const rest = buildStudyQueue(deck, current, now, loadNewCardsPerDay(), tag, used, focus, weakSince);
-    const remaining = rest.due.length + rest.fresh.length;
+    const { percent, remaining } = resultInfo;
     return (
       <section className="study study-result">
         {header}
         {error && <p className="notice warning result-error">{error}</p>}
         <StudyResult
           mode={mode}
-          percent={retentionPercent(phases, deck.cards.length)}
+          percent={percent}
           phaseGain={phaseGain}
           entries={sessionLog}
           reason={result}
@@ -707,6 +749,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
           onUndo={() => void undoLast()}
           tag={tag}
           focus={focus}
+          scopeLabel={multiDeck ? "全デッキ" : "このデッキ"}
           onContinue={() => (result === "interrupted" ? resumeStudy() : onClose(true))}
           onFinish={() => onClose(false)}
         />
@@ -742,17 +785,17 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
           className="card-action"
           aria-label="このカードを編集する"
           disabled={cardEditLocked}
-          onClick={() => setEditingCard(current.card)}
+          onClick={() => setEditingCard({ deckId: current.deckId, card: current.card })}
         >
           <EditIcon />
         </button>
       )}
       <button
         type="button"
-        className={`card-action${notes.has(current.card.id) ? " card-action-on" : ""}`}
+        className={`card-action${notes.has(keyOf(current)) ? " card-action-on" : ""}`}
         disabled={cardEditLocked}
-        aria-label={notes.has(current.card.id) ? "メモを編集" : "メモを書く"}
-        onClick={() => setNoteEditing({ cardId: current.card.id, text: notes.get(current.card.id) ?? "" })}
+        aria-label={notes.has(keyOf(current)) ? "メモを編集" : "メモを書く"}
+        onClick={() => setNoteEditing({ deckId: current.deckId, cardId: current.card.id, text: notes.get(keyOf(current)) ?? "" })}
       >
         <NoteIcon />
       </button>
@@ -761,7 +804,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         className="card-action"
         aria-label="このカードを非表示にする"
         disabled={cardEditLocked}
-        onClick={() => setHideTarget(current.card.id)}
+        onClick={() => setHideTarget({ deckId: current.deckId, cardId: current.card.id })}
       >
         <HideIcon />
       </button>
@@ -800,7 +843,13 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
         )}
       </dialog>
       {editingCard !== null && (
-        <CardEditor deck={deck} card={editingCard} moveTargets={moveTargets} onSave={saveCard} onCancel={() => setEditingCard(null)} />
+        <CardEditor
+          deck={deckOf(editingCard.deckId)}
+          card={editingCard.card}
+          moveTargets={moveTargetsFor(editingCard.deckId)}
+          onSave={saveCard}
+          onCancel={() => setEditingCard(null)}
+        />
       )}
       {hideTarget !== null && (
         <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="このクイズを非表示にしますか？">
@@ -857,6 +906,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
             >
               <div className="study-card buzzer-card">
                 <span className="study-card-chip">
+                  {multiDeck && <span className="chip chip-deck">{deckOf(current.deckId).name}</span>}
                   <span className="phase-chip">フェーズ {currentPhase}</span>
                 </span>
                 {revealed ? (
@@ -865,7 +915,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
                     <hr />
                     <div className="study-back">{current.card.back}</div>
                     {current.card.note && <div className="study-note muted">{current.card.note}</div>}
-                    {notes.has(current.card.id) && <div className="study-memo">{notes.get(current.card.id)}</div>}
+                    {notes.has(keyOf(current)) && <div className="study-memo">{notes.get(keyOf(current))}</div>}
                   </>
                 ) : (
                   <div className="study-front buzzer-text">
@@ -962,6 +1012,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
             <div className={`flip-inner${revealed ? " flipped" : ""}`}>
               <div className="study-card flip-face flip-front" aria-hidden={revealed}>
                 <span className="study-card-chip">
+                  {multiDeck && <span className="chip chip-deck">{deckOf(current.deckId).name}</span>}
                   {current.isNew && <span className="chip chip-new">新規</span>}
                   <span className="phase-chip">フェーズ {currentPhase}</span>
                 </span>
@@ -972,7 +1023,7 @@ export function StudyView({ deck, initialProgress, mode, sessionSize, order, tag
                 <hr />
                 <div className="study-back">{current.card.back}</div>
                 {current.card.note && <div className="study-note muted">{current.card.note}</div>}
-                {notes.has(current.card.id) && <div className="study-memo">{notes.get(current.card.id)}</div>}
+                {notes.has(keyOf(current)) && <div className="study-memo">{notes.get(keyOf(current))}</div>}
               </div>
             </div>
           </div>

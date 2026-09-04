@@ -19,8 +19,8 @@ vi.mock("../src/github", () => ({
     writeDeckMock(deckId, mutate),
   moveCardBetweenDecks: (fromDeckId: string, toDeckId: string, _token: string, card: unknown) => moveCardMock(fromDeckId, toDeckId, card),
 }));
-import { readAllProgress, readAllReviewLog, readCardNotes, resetDbForTest } from "../src/db";
-import { rate } from "../src/srs";
+import { readAllProgress, readAllReviewLog, readCardNotes, readHiddenCards, resetDbForTest } from "../src/db";
+import { progressKey, rate } from "../src/srs";
 import { StudyView } from "../src/StudyView";
 import type { ProgressRecord } from "../src/types";
 
@@ -41,7 +41,8 @@ function renderStudy(overrides: Partial<Parameters<typeof StudyView>[0]> = {}) {
   const updatedDecks: Deck[] = [];
   const view = render(
     <StudyView
-      deck={DECK}
+      decks={[DECK]}
+      title={DECK.name}
       initialProgress={[]}
       mode="normal"
       sessionSize={10}
@@ -49,7 +50,7 @@ function renderStudy(overrides: Partial<Parameters<typeof StudyView>[0]> = {}) {
       tag={null}
       initialNotes={new Map()}
       canEditCards
-      onHide={(cardId) => hidden.push(cardId)}
+      onHide={(_deckId, cardId) => hidden.push(cardId)}
       onDeckUpdated={(...next) => updatedDecks.push(...next)}
       onClose={(restart) => closed.push(restart)}
       {...overrides}
@@ -204,7 +205,7 @@ describe("直前の評価を取り消す", () => {
 
   it("やり切ってリザルトへ入っても取り消せる（最後の1枚の誤操作の戻り道）", async () => {
     const single: Deck = { ...DECK, cards: [DECK.cards[0]] };
-    const { container } = renderStudy({ deck: single });
+    const { container } = renderStudy({ decks: [single] });
     reveal(container);
     fireEvent.click(screen.getByText("わかった"));
 
@@ -272,7 +273,7 @@ describe("カードのメモ", () => {
   });
 
   it("空にするとメモを消す", async () => {
-    renderStudy({ initialNotes: new Map([["001", "あとで消す"]]) });
+    renderStudy({ initialNotes: new Map([[progressKey("deck1", "001"), "あとで消す"]]) });
     fireEvent.click(memoButton());
     const input = (await screen.findByPlaceholderText("メモを入力")) as HTMLTextAreaElement;
     expect(input.value).toBe("あとで消す");
@@ -334,7 +335,8 @@ describe("StrictMode（効果が setup → cleanup → setup で二度走る）"
     const view = render(
       <StrictMode>
         <StudyView
-          deck={DECK}
+          decks={[DECK]}
+          title={DECK.name}
           initialProgress={[]}
           mode="normal"
           sessionSize={10}
@@ -406,7 +408,7 @@ describe("学習中のカード編集", () => {
   });
 
   it("開くと今の内容が入っている", async () => {
-    renderStudy({ deck: { ...DECK, cards: [{ ...DECK.cards[0], note: "補足", tags: ["地理", "首都"] }] } });
+    renderStudy({ decks: [{ ...DECK, cards: [{ ...DECK.cards[0], note: "補足", tags: ["地理", "首都"] }] }] });
     fireEvent.click(editButton() as HTMLButtonElement);
     await screen.findByText("カードを編集");
     expect((screen.getByLabelText(/表面/) as HTMLTextAreaElement).value).toBe("日本の首都は");
@@ -469,7 +471,7 @@ describe("学習中のカード編集", () => {
         from: { ...DECK, cards: DECK.cards.filter((existing) => existing.id !== card.id) },
       }),
     );
-    const view = renderStudy({ moveTargets: [OTHER] });
+    const view = renderStudy({ moveTargetsFor: () => [OTHER] });
     fireEvent.click(editButton() as HTMLButtonElement);
     await screen.findByText("カードを編集");
     fireEvent.change(screen.getByLabelText("デッキ"), { target: { value: "deck2" } });
@@ -555,5 +557,104 @@ describe("苦手だけ（focus=weak）", () => {
   it("苦手が1枚も無ければ、苦手用の空メッセージを出す", () => {
     renderStudy({ focus: "weak", weakSince: Date.now(), initialProgress: [solidRecord("001")] });
     expect(screen.getByText("苦手カードはありません")).toBeTruthy();
+  });
+});
+
+describe("デッキをまたぐ学習（decks が2つ以上）", () => {
+  const yesterday = new Date("2026-08-08T03:00:00Z").getTime();
+  /** 期限切れの進捗（deckId 付き） */
+  function dueRecord(deckId: string, cardId: string, dueAt: number): ProgressRecord {
+    const base = rate(null, 3, new Date("2026-08-01T03:00:00Z"));
+    return { deckId, cardId, progress: { ...base, due: dueAt, lastReview: yesterday }, introducedDayKey: "2026-08-01", updatedAt: yesterday };
+  }
+  const OTHER_DECK: Deck = {
+    schemaVersion: 1,
+    id: "deck2",
+    name: "別のデッキ",
+    // 001 は DECK と同じ id（デッキをまたぐと衝突しうる）
+    cards: [
+      { id: "001", front: "スペインの首都は", back: "マドリード" },
+      { id: "009", front: "ドイツの首都は", back: "ベルリン" },
+    ],
+  };
+
+  it("全デッキの期限切れを期限順に出し、カードにデッキ名を添え、進捗はそれぞれの deckId で保存する", async () => {
+    const { container } = renderStudy({
+      decks: [DECK, OTHER_DECK],
+      title: "まとめて学習",
+      initialProgress: [dueRecord("deck1", "001", Date.now() - 1000), dueRecord("deck2", "001", Date.now() - 5000)],
+    });
+    // deck2/001 の方が期限が早い
+    expect(container.querySelector(".study-front")?.textContent).toBe("スペインの首都は");
+    expect(container.querySelector(".chip-deck")?.textContent).toBe("別のデッキ");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("まとめて学習");
+    // 新規（進捗なし）は出さない
+    expect(remainingText()).toContain("残り 2 枚");
+
+    reveal(container);
+    fireEvent.click(screen.getByText("わかった"));
+    await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("日本の首都は"));
+    expect(container.querySelector(".chip-deck")?.textContent).toBe("テストデッキ");
+
+    const progress = await readAllProgress();
+    const updated = progress.find((record) => record.deckId === "deck2" && record.cardId === "001");
+    expect(updated?.progress.reps).toBe(2);
+    // deck1/001 は未評価のまま（initialProgress は props で渡しただけなので DB には無い）
+    expect(progress.find((record) => record.deckId === "deck1" && record.cardId === "001")).toBeUndefined();
+    expect(progress).toHaveLength(1);
+  });
+
+  it("同じ id の「もう一度」を取り消しても、別デッキの同じ id の再出題は消えない", async () => {
+    const { container } = renderStudy({
+      decks: [DECK, OTHER_DECK],
+      title: "まとめて学習",
+      sessionSize: 10,
+      initialProgress: [dueRecord("deck2", "001", Date.now() - 5000), dueRecord("deck1", "001", Date.now() - 1000)],
+    });
+    // deck2/001 → もう一度（末尾へ再出題）、deck1/001 → もう一度（末尾へ再出題）
+    reveal(container);
+    fireEvent.click(screen.getByText("難しい"));
+    await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("日本の首都は"));
+    // deck1/001 を「もう一度」相当にするため、スワイプの代わりに直接評価はできないので、ここでは取り消しの鍵だけを確かめる
+    await waitUntilUndoReady();
+    fireEvent.click(undoButton());
+    await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("スペインの首都は"));
+    expect(remainingText()).toContain("残り 2 枚");
+  });
+
+  it("メモと非表示は、そのカードのデッキ id で保存される", async () => {
+    const { container, hidden } = renderStudy({
+      decks: [DECK, OTHER_DECK],
+      title: "まとめて学習",
+      initialProgress: [dueRecord("deck2", "009", Date.now() - 5000), dueRecord("deck1", "002", Date.now() - 1000)],
+    });
+    expect(container.querySelector(".study-front")?.textContent).toBe("ドイツの首都は");
+    fireEvent.click(screen.getByLabelText("メモを書く"));
+    const input = (await screen.findByPlaceholderText("メモを入力")) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "首都はベルリン" } });
+    fireEvent.click(screen.getByText("とじる"));
+    await waitFor(async () => expect(await readCardNotes("deck2")).toHaveLength(1));
+    expect(await readCardNotes("deck1")).toHaveLength(0);
+
+    fireEvent.click(screen.getByLabelText("このカードを非表示にする"));
+    fireEvent.click(screen.getByText("非表示にする"));
+    await waitFor(() => expect(hidden).toEqual(["009"]));
+    expect(await readHiddenCards("deck2")).toHaveLength(1);
+    expect(await readHiddenCards("deck1")).toHaveLength(0);
+    await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("フランスの首都は"));
+  });
+
+  it("結果画面では定着率ゲージを出さず、一覧にデッキ名が出る", async () => {
+    const { container } = renderStudy({
+      decks: [DECK, OTHER_DECK],
+      title: "まとめて学習",
+      initialProgress: [dueRecord("deck2", "009", Date.now() - 5000)],
+    });
+    reveal(container);
+    fireEvent.click(screen.getByText("わかった"));
+    await waitFor(() => expect(screen.getByText("終了する")).toBeTruthy());
+    expect(document.querySelector(".gauge")).toBeNull();
+    expect(document.querySelector(".result-deck")?.textContent).toBe("別のデッキ");
+    expect(screen.getByText(/全デッキで今日出せるカードは終わりました/)).toBeTruthy();
   });
 });

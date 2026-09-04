@@ -5,6 +5,8 @@ import type { ReviewRating, StudyFocus, StudyMode } from "./types";
 /** このセッションで評価した1枚ぶんの記録 */
 export interface SessionEntry {
   cardId: string;
+  /** デッキをまたぐ学習のときだけ入る（一覧でどのデッキの問題か分かるように） */
+  deckName?: string;
   front: string;
   back: string;
   rating: ReviewRating;
@@ -19,8 +21,8 @@ export interface SessionEntry {
 interface StudyResultProps {
   mode: StudyMode;
   entries: SessionEntry[];
-  /** デッキ全体の定着率（定着したカードのフェーズ合計 ÷ 満点） */
-  percent: number;
+  /** デッキ全体の定着率（定着したカードのフェーズ合計 ÷ 満点）。デッキをまたぐ学習では null（分母が全カードになり意味を失う） */
+  percent: number | null;
   /** このセッションで進んだフェーズの合計 */
   phaseGain: number;
   /** セッションを途中で止めたのか、キューを最後までやり切ったのか */
@@ -36,6 +38,8 @@ interface StudyResultProps {
   tag: string | null;
   /** 苦手だけの学習だったか。残り0枚の案内を分ける */
   focus?: StudyFocus;
+  /** 残り0枚の案内の主語。1デッキなら「このデッキ」、またぐときは「全デッキ」 */
+  scopeLabel?: string;
   onContinue: () => void;
   onFinish: () => void;
 }
@@ -65,8 +69,10 @@ const RATING_CLASSES: Record<ReviewRating, string> = {
  * 定着率に応じた一言。デッキ全体の進み具合を見た文言にする
  * （セッション単体の出来ではないので「今回よくできた」とは書かない）
  */
-function comment(percent: number, phaseGain: number): string[] {
+function comment(percent: number | null, phaseGain: number): string[] {
   const gained = phaseGain > 0 ? `今回のぶんで ${phaseGain} フェーズ進みました` : "";
+  // デッキをまたぐ学習では定着率を出さないので、進んだフェーズだけを言う
+  if (percent === null) return [gained || "評価が進捗に反映されました", "デッキごとの定着率はホームで確認できます"];
   if (percent >= 90) return ["このデッキはほぼ完成です！", gained || "仕上げの復習を続けましょう"];
   if (percent >= 60) return ["大半が身についてきました", gained || "この調子で続けましょう"];
   if (percent >= 30) return ["着実に積み上がっています", gained || "くり返すほど間隔が延びます"];
@@ -134,13 +140,13 @@ function Gauge({ percent }: { percent: number }) {
   );
 }
 
-export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, busy, tag, focus = "all", onUndo, onContinue, onFinish }: StudyResultProps) {
+export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, busy, tag, focus = "all", scopeLabel = "このデッキ", onUndo, onContinue, onFinish }: StudyResultProps) {
   const labels = mode === "buzzer" ? BUZZER_RATING_LABELS : RATING_LABELS;
 
   return (
     <div className="result-scroll">
       <div className="result-head">
-        <Gauge percent={percent} />
+        {percent !== null && <Gauge percent={percent} />}
         {entries.length === 0 ? (
           <p className="result-comment">まだ1枚も評価していません</p>
         ) : (
@@ -168,8 +174,8 @@ export function StudyResult({ mode, entries, percent, phaseGain, reason, canCont
         {reason === "completed" && !canContinue && (
           <p className="muted">
             {focus === "weak"
-              ? `${tag === null ? "このデッキ" : `「${tag}」`}の苦手カードは一通り復習しました。もう一度やるなら、ホームから開き直してください。`
-              : `${tag === null ? "このデッキ" : `「${tag}」`}で今日出せるカードは終わりました。`}
+              ? `${tag === null ? scopeLabel : `「${tag}」`}の苦手カードは一通り復習しました。もう一度やるなら、ホームから開き直してください。`
+              : `${tag === null ? scopeLabel : `「${tag}」`}で今日出せるカードは終わりました。`}
           </p>
         )}
       </div>
@@ -183,6 +189,7 @@ export function StudyResult({ mode, entries, percent, phaseGain, reason, canCont
           <li key={`${entry.cardId}-${index}`} className="result-card">
             <div className="result-card-head">
               <span className={`result-chip ${RATING_CLASSES[entry.rating]}`}>{labels[entry.rating]}</span>
+              {entry.deckName && <span className="muted result-deck">{entry.deckName}</span>}
               <span className="muted result-next">再出題 {entry.interval}</span>
             </div>
             <p className="result-front">{entry.front}</p>
