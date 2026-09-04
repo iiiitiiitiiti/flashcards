@@ -954,6 +954,7 @@ body.study-lock {
 .settings-group input[type="password"],
 .settings-group input[type="text"],
 .settings-group input[type="number"],
+.settings-group select,
 textarea {
   font: inherit;
   padding: 10px 12px;

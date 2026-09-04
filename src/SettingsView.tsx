@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { downloadBackup, importBackup } from "./backup";
+import { downloadBackup, importBackup, parseBackupBytes } from "./backup";
+import { BACKUP_PATH, BACKUP_REPOSITORY, listCloudBackups, restoreFromCloud, uploadBackup } from "./cloudbackup";
 import { deleteProgressByKeys, readAllProgress } from "./db";
 import { estimateStorage, formatBytes, isQuotaExceeded, type StorageUsage } from "./quota";
-import { testConnection } from "./github";
+import { OWNER, testConnection, type FileCommit } from "./github";
 import {
+  loadAutoCloudBackup,
+  loadCloudBackupError,
+  loadLastCloudBackupAt,
+  saveAutoCloudBackup,
+  saveCloudBackupError,
+  saveLastCloudBackupAt,
+  saveLastCloudBackupAttemptAt,
+  type CloudBackupError,
   BUZZER_SPEEDS,
   clearToken,
   loadBuzzerSpeed,
@@ -44,6 +53,14 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [lastBackupAt, setLastBackupAt] = useState(loadLastBackupAt());
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [autoCloud, setAutoCloud] = useState(loadAutoCloudBackup);
+  const [lastCloudBackupAt, setLastCloudBackupAt] = useState(loadLastCloudBackupAt);
+  const [cloudError, setCloudError] = useState<CloudBackupError | null>(loadCloudBackupError);
+  const [cloudMessage, setCloudMessage] = useState<string | null>(null);
+  const [cloudBusy, setCloudBusy] = useState(false);
+  /** 復元できる版。「版を選ぶ」を押すまで取らない（API 呼び出しを増やさない） */
+  const [cloudVersions, setCloudVersions] = useState<FileCommit[] | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState<string>("main");
   const [orphanMessage, setOrphanMessage] = useState<string | null>(null);
   const [crossfade, setCrossfade] = useState(loadMotionPreference() === "crossfade");
   const [buzzerSpeed, setBuzzerSpeed] = useState(loadBuzzerSpeed);
@@ -104,8 +121,17 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
     setTokenMessage(null);
     try {
       const result = await testConnection(token.trim());
+      // バックアップ用リポは「届くか」だけを見る。permissions.push が fine-grained PAT の
+      // Contents 権限を映す保証が無いので、書き込みは「今すぐ保存」で確かめる
+      let backupAccess: string;
+      try {
+        await testConnection(token.trim(), BACKUP_REPOSITORY);
+        backupAccess = "アクセス可";
+      } catch (error) {
+        backupAccess = error instanceof Error ? error.message : "アクセス不可";
+      }
       setTokenMessage(
-        `接続成功: ${result.repository}（書き込み: ${result.writeAccess === "available" ? "可" : result.writeAccess === "unavailable" ? "不可" : "未確認"}）`,
+        `接続成功: ${result.repository}（書き込み: ${result.writeAccess === "available" ? "可" : result.writeAccess === "unavailable" ? "不可" : "未確認"}）。バックアップ用 ${BACKUP_REPOSITORY}: ${backupAccess}`,
       );
     } catch (error) {
       setTokenMessage(error instanceof Error ? error.message : "接続テストに失敗しました。");
@@ -129,7 +155,8 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
   async function handleImportFile(file: File) {
     setBackupMessage(null);
     try {
-      const parsed: unknown = JSON.parse(await file.text());
+      // GitHub から手で落とした .json.gz も、手動書き出しの .json も同じ入口で読む
+      const parsed = await parseBackupBytes(new Uint8Array(await file.arrayBuffer()));
       const result = await importBackup(parsed);
       setBackupMessage(
         `インポート完了: 進捗 ${result.progressImported} 件更新・${result.progressSkipped} 件スキップ・ログ ${result.logsImported} 件追加・メモ ${result.notesImported} 件・非表示 ${result.hiddenImported} 件。`,
@@ -141,6 +168,72 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
           ? error.message
           : "不明なエラー";
       setBackupMessage(`インポート失敗（何も変更していません）: ${reason}`);
+    }
+  }
+
+  function handleAutoCloudChange(next: boolean) {
+    setAutoCloud(next);
+    saveAutoCloudBackup(next);
+  }
+
+  async function handleCloudUpload() {
+    const current = token.trim();
+    if (current === "") return;
+    setCloudBusy(true);
+    setCloudMessage(null);
+    try {
+      const result = await uploadBackup(current);
+      saveLastCloudBackupAt(result.exportedAt);
+      saveLastCloudBackupAttemptAt(result.exportedAt);
+      saveCloudBackupError(null);
+      setLastCloudBackupAt(result.exportedAt);
+      setCloudError(null);
+      setCloudMessage(`GitHub へ保存しました: 進捗 ${result.progressCount} 件・ログ ${result.logCount} 件・メモ ${result.noteCount} 件（gzip ${formatBytes(result.bytes)}）。`);
+      setCloudVersions(null);
+    } catch (error) {
+      setCloudMessage(error instanceof Error ? error.message : "GitHub への保存に失敗しました。");
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  async function handleLoadCloudVersions() {
+    const current = token.trim();
+    if (current === "") return;
+    setCloudBusy(true);
+    setCloudMessage(null);
+    try {
+      const versions = await listCloudBackups(current);
+      setCloudVersions(versions);
+      setSelectedVersion("main");
+      if (versions.length === 0) setCloudMessage("GitHub にバックアップがまだありません。");
+    } catch (error) {
+      setCloudMessage(error instanceof Error ? error.message : "版の一覧を取得できませんでした。");
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  async function handleCloudRestore() {
+    const current = token.trim();
+    if (current === "") return;
+    setCloudBusy(true);
+    setCloudMessage(null);
+    try {
+      const restored = await restoreFromCloud(current, selectedVersion);
+      const { result } = restored;
+      setCloudMessage(
+        `${formatTimestamp(restored.exportedAt)} 時点のバックアップを統合しました: 進捗 ${result.progressImported} 件更新・${result.progressSkipped} 件は端末側が新しいので維持・ログ ${result.logsImported} 件追加・メモ ${result.notesImported} 件・非表示 ${result.hiddenImported} 件。`,
+      );
+    } catch (error) {
+      const reason = isQuotaExceeded(error)
+        ? "端末の保存容量が足りません。空きを増やしてからお試しください"
+        : error instanceof Error
+          ? error.message
+          : "不明なエラー";
+      setCloudMessage(`復元失敗（何も変更していません）: ${reason}`);
+    } finally {
+      setCloudBusy(false);
     }
   }
 
@@ -279,7 +372,7 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/json"
+          accept=".json,.gz,application/json,application/gzip"
           className="hidden-input"
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -288,6 +381,53 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
           }}
         />
         {backupMessage && <p className="notice">{backupMessage}</p>}
+      </div>
+
+      <h2>GitHub へのバックアップ（{OWNER}/{BACKUP_REPOSITORY}）</h2>
+      <p className="muted">
+        非公開リポジトリの {BACKUP_PATH} に gzip で保存します。上のトークンに、このリポジトリも追加してください（Contents: Read and write）。
+        GitHub への最終保存: {lastCloudBackupAt !== null ? formatTimestamp(lastCloudBackupAt) : "未実施"}
+      </p>
+      {cloudError && (
+        <p className="notice warning">
+          自動保存に失敗（{formatTimestamp(cloudError.at)}）: {cloudError.message}
+        </p>
+      )}
+      <div className="settings-group">
+        <label className="checkbox-label">
+          <input type="checkbox" checked={autoCloud} onChange={(event) => handleAutoCloudChange(event.target.checked)} />
+          学習を終えたとき自動で保存する（1日1回）
+        </label>
+        <div className="button-row">
+          <button type="button" onClick={() => void handleCloudUpload()} disabled={cloudBusy || token.trim() === ""}>
+            {cloudBusy ? "処理中…" : "今すぐ GitHub へ保存"}
+          </button>
+          <button type="button" onClick={() => void handleLoadCloudVersions()} disabled={cloudBusy || token.trim() === ""}>
+            復元する版を選ぶ
+          </button>
+        </div>
+        {cloudVersions !== null && cloudVersions.length > 0 && (
+          <>
+            <select value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} aria-label="復元する版">
+              <option value="main">最新</option>
+              {cloudVersions.map((commit) => (
+                <option key={commit.sha} value={commit.sha}>
+                  {commit.date ? formatTimestamp(Date.parse(commit.date)) : commit.sha.slice(0, 7)} — {commit.message.split("\n")[0]}
+                </option>
+              ))}
+            </select>
+            <div className="button-row">
+              <button type="button" onClick={() => void handleCloudRestore()} disabled={cloudBusy}>
+                {cloudBusy ? "処理中…" : "この版を統合する"}
+              </button>
+            </div>
+            <p className="muted">
+              復元は上書きではなく統合です。端末側の方が新しい進捗はそのまま残り、端末で消した進捗が戻ることがあります。非表示の解除は戻りません。
+            </p>
+          </>
+        )}
+        {token.trim() === "" && <p className="muted">トークンを登録すると使えます。</p>}
+        {cloudMessage && <p className="notice">{cloudMessage}</p>}
       </div>
 
       <h2>アニメーション</h2>

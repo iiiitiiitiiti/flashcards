@@ -1,7 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type { CardNote, DeckCacheEntry, HiddenCard, ImportDraft, ProgressRecord, ReviewLogEntry } from "./types";
 
-interface FlashcardsDB extends DBSchema {
+export interface FlashcardsDB extends DBSchema {
   cardProgress: {
     key: [string, string];
     value: ProgressRecord;

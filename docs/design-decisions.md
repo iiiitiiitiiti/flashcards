@@ -647,3 +647,11 @@ setup で `true` へ戻していなかった。StrictMode は setup → cleanup 
 - 生成デッキでは保存時に「小ジャンル系ちょうど1つ・★は1つまで」を検査する。xlsx の列へ分解できない形を iPhone の時点で止める（次の sync まで気づかないと直しにくい）
 - 再生成でアプリの編集を消さない仕組みは `docs/decisions/008`
 - 1MB 超のデッキ（公民・理系・生活）も同日中に編集・移動の対象にした。Contents API が本文を返さないぶんを Blob API で読む（`docs/decisions/009`）
+
+## 2026-09-04: 学習進捗を GitHub の private リポへ自動バックアップ
+
+- 学習を終えてホームへ戻ると、1日1回、進捗・評価ログ・メモ・非表示を gzip して `iiiitiiitiiti/flashcards-progress` の `backups/latest.json.gz` へ送る。
+  失敗したときだけホームに1行出し、設定に理由を残す（6 時間おきに再試行）
+- 設定に「今すぐ GitHub へ保存」「復元する版を選ぶ」を足した。復元は上書きではなく統合で、履歴の任意の版を選べる
+- 「JSONを取り込む」は `.json.gz` も読む。PAT にはバックアップ用リポも追加が要る（Contents: Read and write）。判断の詳細は `docs/decisions/010`
+

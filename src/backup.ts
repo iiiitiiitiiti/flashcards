@@ -1,4 +1,5 @@
-import { getDb } from "./db";
+import { getDb, type FlashcardsDB } from "./db";
+import type { IDBPTransaction } from "idb";
 import { validateProgressDTO } from "./srs";
 import type { CardNote, HiddenCard, ProgressRecord, ReviewLogEntry, ReviewRating } from "./types";
 
@@ -35,21 +36,29 @@ export interface BackupExport {
  */
 export async function exportBackup(exportedAt = Date.now()): Promise<BackupExport> {
   const parts: string[] = [`{\n  "schemaVersion": 1,\n  "exportedAt": ${exportedAt},\n  "cardProgress": [`];
-  const progressCount = await appendAll("cardProgress", parts);
+  // 4ストアを1つのトランザクションで読む。別々に読むと、途中で入った評価が
+  // 「ログにはあるが進捗は古い」形でバックアップに残る（学習直後の自動保存で起きうる）
+  const db = await getDb();
+  const tx = db.transaction([...BACKUP_STORES], "readonly");
+  const progressCount = await appendAll(tx, "cardProgress", parts);
   parts.push('],\n  "reviewLog": [');
-  const logCount = await appendAll("reviewLog", parts);
+  const logCount = await appendAll(tx, "reviewLog", parts);
   parts.push('],\n  "cardNotes": [');
-  const noteCount = await appendAll("cardNotes", parts);
+  const noteCount = await appendAll(tx, "cardNotes", parts);
   parts.push('],\n  "hiddenCards": [');
-  await appendAll("hiddenCards", parts);
+  await appendAll(tx, "hiddenCards", parts);
   parts.push("]\n}\n");
+  await tx.done;
   return { blob: new Blob(parts, { type: "application/json" }), exportedAt, progressCount, logCount, noteCount };
 }
 
-async function appendAll(storeName: "cardProgress" | "reviewLog" | "cardNotes" | "hiddenCards", parts: string[]): Promise<number> {
-  const db = await getDb();
+const BACKUP_STORES = ["cardProgress", "reviewLog", "cardNotes", "hiddenCards"] as const;
+type BackupStore = (typeof BACKUP_STORES)[number];
+type BackupTransaction = IDBPTransaction<FlashcardsDB, BackupStore[], "readonly">;
+
+async function appendAll(tx: BackupTransaction, storeName: BackupStore, parts: string[]): Promise<number> {
   let count = 0;
-  let cursor = await db.transaction(storeName).store.openCursor();
+  let cursor = await tx.objectStore(storeName).openCursor();
   while (cursor) {
     parts.push(count === 0 ? "\n    " : ",\n    ");
     parts.push(JSON.stringify(cursor.value));
@@ -200,4 +209,46 @@ export async function downloadBackup(): Promise<BackupExport> {
   // click 直後に revoke すると、保存が始まる前に無効になる端末がある
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return result;
+}
+
+/**
+ * バックアップの JSON を gzip したバイト列にする（GitHub へ送る形）。
+ * 素の JSON は全カード学習時に 10MB 級になり、base64 化で端末のメモリと送信量を食う。
+ * CompressionStream は iOS 16.4 以降。無い環境では例外にして、呼び出し側が文言を出す
+ */
+export async function gzipBlob(blob: Blob): Promise<Uint8Array> {
+  if (typeof CompressionStream === "undefined") {
+    throw new Error("この環境は gzip 圧縮（CompressionStream）に対応していません。iOS 16.4 以降のブラウザで使えます。");
+  }
+  const compressed = blob.stream().pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(compressed).arrayBuffer());
+}
+
+/** gzip の魔法数（1f 8b）で始まるか */
+export function isGzip(bytes: Uint8Array): boolean {
+  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+/**
+ * バックアップのバイト列を検証済みの文書にする。gzip（GitHub のバックアップ）と
+ * 素の JSON（手動で書き出したファイル）の両方を受け付ける
+ */
+export async function parseBackupBytes(bytes: Uint8Array): Promise<BackupDocument> {
+  let text: string;
+  if (isGzip(bytes)) {
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("この環境は gzip の展開（DecompressionStream）に対応していません。iOS 16.4 以降のブラウザで使えます。");
+    }
+    const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("gzip"));
+    text = await new Response(stream).text();
+  } else {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("バックアップの JSON を読み取れません（ファイルが壊れています）");
+  }
+  return validateBackup(parsed);
 }
