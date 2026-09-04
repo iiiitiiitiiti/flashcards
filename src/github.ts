@@ -29,9 +29,9 @@ export interface DeckListing {
   decks: DeckListingEntry[];
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timeoutId = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -48,14 +48,23 @@ function apiHeaders(token: string | null, body = false): Headers {
   return headers;
 }
 
-async function apiRequest<T>(endpoint: string, token: string | null, init: RequestInit = {}): Promise<{ status: number; data: T }> {
+async function apiRequest<T>(
+  endpoint: string,
+  token: string | null,
+  init: RequestInit = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<{ status: number; data: T }> {
   let response: Response;
   let raw: string;
   try {
-    response = await fetchWithTimeout(`${API_ROOT}${endpoint}`, {
-      ...init,
-      headers: apiHeaders(token, Boolean(init.body)),
-    });
+    response = await fetchWithTimeout(
+      `${API_ROOT}${endpoint}`,
+      {
+        ...init,
+        headers: apiHeaders(token, Boolean(init.body)),
+      },
+      timeoutMs,
+    );
     raw = await response.text();
   } catch {
     throw new Error("GitHub に接続できませんでした。通信環境を確認してください。");
@@ -113,17 +122,132 @@ export interface ConnectionTestResult {
   writeAccess: "available" | "unavailable" | "unconfirmed";
 }
 
-/** PAT の読み取り・書き込み権限を確認する */
-export async function testConnection(token: string): Promise<ConnectionTestResult> {
-  const response = await apiRequest<RepositoryMetadata>(`/repos/${OWNER}/${REPOSITORY}`, token);
+/**
+ * PAT の読み取り・書き込み権限を確認する。`repository` を渡せば別リポ（バックアップ用）も見られる。
+ * fine-grained PAT は一覧に無いリポを 404 で返すので、404 は「PAT に追加されていない」として扱う
+ */
+export async function testConnection(token: string, repository = REPOSITORY): Promise<ConnectionTestResult> {
+  const response = await apiRequest<RepositoryMetadata>(`/repos/${OWNER}/${repository}`, token);
   if (response.status === 401) throw new Error("トークンが無効です (401)。有効期限と値を確認してください。");
   if (response.status === 403) throw new Error("アクセスが拒否されました (403)。トークンの権限を確認してください。");
+  if (response.status === 404) throw new Error(`リポジトリ ${OWNER}/${repository} にアクセスできません (404)。PAT のリポジトリ一覧に追加してください。`);
   if (response.status !== 200) throw new Error(`リポジトリ情報を取得できませんでした (${response.status})`);
   const push = response.data.permissions?.push;
   return {
-    repository: response.data.full_name ?? `${OWNER}/${REPOSITORY}`,
+    repository: response.data.full_name ?? `${OWNER}/${repository}`,
     writeAccess: push === true ? "available" : push === false ? "unavailable" : "unconfirmed",
   };
+}
+
+export interface RepoFile {
+  /** base64 を復号した生バイト列（テキストなら `decodeUtf8Bytes` で文字列にする） */
+  bytes: Uint8Array;
+  sha: string;
+}
+
+export interface FileCommit {
+  sha: string;
+  /** コミット日時（ISO 8601） */
+  date: string;
+  message: string;
+}
+
+async function fetchContents(repository: string, path: string, token: string, ref: string): Promise<{ status: number; data: ContentsResponse } | null> {
+  const response = await apiRequest<ContentsResponse>(
+    `/repos/${OWNER}/${repository}/contents/${encodeRepoPath(path)}?ref=${encodeURIComponent(ref)}`,
+    token,
+  );
+  if (response.status === 404) return null;
+  if (response.status !== 200 || !response.data.sha) {
+    throw new Error(describeAuthFailure(response.status) ?? `${repository}/${path} を取得できませんでした (${response.status})`);
+  }
+  return response;
+}
+
+/**
+ * ファイルの blob sha だけを取る（上書き PUT に付けるため）。無ければ null。
+ * 1MB 超のファイルは Contents API が本文を返さないので、本文を落とさずに済む
+ */
+export async function statRepoFile(repository: string, path: string, token: string, ref = BRANCH): Promise<string | null> {
+  const response = await fetchContents(repository, path, token, ref);
+  return response?.data.sha ?? null;
+}
+
+/** 任意のリポ・パスのファイルを読む（バックアップ用）。無ければ null。1MB 超は Blob API へ迂回する */
+export async function readRepoFile(repository: string, path: string, token: string, ref = BRANCH): Promise<RepoFile | null> {
+  const response = await fetchContents(repository, path, token, ref);
+  if (response === null || !response.data.sha) return null;
+  if (response.data.content && response.data.encoding === "base64") {
+    return { bytes: decodeBase64Bytes(response.data.content), sha: response.data.sha };
+  }
+  const blob = await apiRequest<ContentsResponse>(`/repos/${OWNER}/${repository}/git/blobs/${response.data.sha}`, token);
+  if (blob.status !== 200 || !blob.data.content || blob.data.encoding !== "base64") {
+    throw new Error(`${repository}/${path} の本文を取得できませんでした (${blob.status})`);
+  }
+  return { bytes: decodeBase64Bytes(blob.data.content), sha: response.data.sha };
+}
+
+export interface PutRepoFileOptions {
+  message: string;
+  bytes: Uint8Array;
+  /** 上書きなら現在の blob sha。新規作成なら省略 */
+  sha?: string;
+  timeoutMs?: number;
+}
+
+/**
+ * 任意のリポ・パスへファイルを書く（バックアップ用）。status と本文をそのまま返し、
+ * 409（競合）・422（sha の食い違い）の再試行は呼び出し側が行う
+ */
+export async function putRepoFile(
+  repository: string,
+  path: string,
+  token: string,
+  options: PutRepoFileOptions,
+): Promise<{ status: number; message?: string }> {
+  const response = await apiRequest<ContentsResponse>(
+    `/repos/${OWNER}/${repository}/contents/${encodeRepoPath(path)}`,
+    token,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        message: options.message,
+        content: encodeBase64Bytes(options.bytes),
+        ...(options.sha ? { sha: options.sha } : {}),
+        branch: BRANCH,
+      }),
+    },
+    options.timeoutMs,
+  );
+  return { status: response.status, message: response.data.message };
+}
+
+interface CommitListEntry {
+  sha?: string;
+  commit?: { message?: string; committer?: { date?: string }; author?: { date?: string } };
+}
+
+/** あるファイルを変更したコミットを新しい順に返す（復元する版の一覧に使う） */
+export async function listFileCommits(repository: string, path: string, token: string, limit = 10): Promise<FileCommit[]> {
+  const response = await apiRequest<CommitListEntry[] | ContentsResponse>(
+    `/repos/${OWNER}/${repository}/commits?path=${encodeURIComponent(path)}&sha=${BRANCH}&per_page=${limit}`,
+    token,
+  );
+  if (response.status !== 200 || !Array.isArray(response.data)) {
+    throw new Error(describeAuthFailure(response.status) ?? `${repository}/${path} の履歴を取得できませんでした (${response.status})`);
+  }
+  return response.data
+    .filter((entry): entry is CommitListEntry & { sha: string } => typeof entry.sha === "string")
+    .map((entry) => ({
+      sha: entry.sha,
+      date: entry.commit?.committer?.date ?? entry.commit?.author?.date ?? "",
+      message: entry.commit?.message ?? "",
+    }));
+}
+
+/** パスの各セグメントだけをエンコードする（`/` は残す） */
+function encodeRepoPath(path: string): string {
+  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 
 /** コミット固定 raw URL からデッキ JSON の生テキストを取得する（レート制限なし） */
@@ -339,18 +463,29 @@ async function deleteDeckOnce(deckId: string, token: string): Promise<void> {
 }
 
 export function decodeBase64Utf8(value: string): string {
-  const normalized = value.replace(/\s/g, "");
-  const binary = atob(normalized);
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return decodeUtf8Bytes(decodeBase64Bytes(value));
 }
 
 export function encodeBase64Utf8(value: string): string {
-  const bytes = new TextEncoder().encode(value);
+  return encodeBase64Bytes(new TextEncoder().encode(value));
+}
+
+/** base64（改行入りでも可）をバイト列にする */
+export function decodeBase64Bytes(value: string): Uint8Array {
+  const binary = atob(value.replace(/\s/g, ""));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+/** バイト列を base64 にする。数MB でも呼び出しスタックを溢れさせないよう分割して文字列化する */
+export function encodeBase64Bytes(bytes: Uint8Array): string {
   let binary = "";
   const chunkSize = 0x8000;
   for (let index = 0; index < bytes.length; index += chunkSize) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
   }
   return btoa(binary);
+}
+
+export function decodeUtf8Bytes(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }

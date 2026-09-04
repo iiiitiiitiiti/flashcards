@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { shouldAutoBackup, uploadBackup } from "./cloudbackup";
 import { pruneReviewLog, readAllHiddenCards, readAllProgress, readCardNotes, readProgress, upsertDeckCacheEntry } from "./db";
 import { requestPersistentStorage } from "./quota";
 import { isValidId, type Deck } from "./deck";
@@ -12,7 +13,10 @@ import { resumePendingDeckDeletions } from "./deckcleanup";
 import { moveTargets } from "./deckedit";
 import { buildStudyQueue, countIntroducedToday, formatPercent, retentionPercent } from "./srs";
 import {
+  loadAutoCloudBackup,
   loadDeckSort,
+  loadLastCloudBackupAt,
+  loadLastCloudBackupAttemptAt,
   loadMotionPreference,
   loadNewCardsPerDay,
   loadNewCardsScope,
@@ -21,7 +25,10 @@ import {
   loadStudyMode,
   loadStudyTag,
   loadToken,
+  saveCloudBackupError,
   saveDeckSort,
+  saveLastCloudBackupAt,
+  saveLastCloudBackupAttemptAt,
   saveSessionSize,
   saveStudyMode,
   saveStudyOrder,
@@ -32,6 +39,9 @@ import {
 import { SettingsView } from "./SettingsView";
 import { StudyView } from "./StudyView";
 import type { DeckCacheEntry, DeckSnapshot, ProgressRecord, StudyMode, StudyOrder } from "./types";
+
+/** 学習終了からバックアップ開始までの待ち。統計の再計算（進捗の全件読み）と重ねない */
+const AUTO_BACKUP_DELAY_MS = 2_000;
 
 interface DeckStats {
   due: number;
@@ -182,6 +192,11 @@ export function App() {
   const [newDeck, setNewDeck] = useState<NewDeckForm | null>(null);
   const [creating, setCreating] = useState(false);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
+  /** 自動バックアップの失敗をホームに1行だけ出す（成功時は何も出さない） */
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const autoBackupAttemptRef = useRef<number | null>(null);
+  const viewRef = useRef<View>(view);
+  viewRef.current = view;
 
   // トークンを登録している間だけデッキの追加・削除ができる（設定画面から戻ると再評価される）
   const canEdit = loadToken() !== "";
@@ -444,6 +459,41 @@ export function App() {
     }
     setView({ type: "home" });
     if (snapshot) void updateStats(snapshot);
+    scheduleAutoBackup();
+  }
+
+  /**
+   * 学習を終えてホームへ戻ったあと、条件が揃えば GitHub へ進捗を送る（1日1回）。
+   * 統計の再計算と IndexedDB を取り合わないよう少し遅らせ、その間に次の学習を始めていたら送らない。
+   * localStorage が書けない環境でも同じセッションで繰り返さないよう、試行時刻はメモリにも持つ
+   */
+  function scheduleAutoBackup() {
+    const token = loadToken();
+    if (token === "") return;
+    globalThis.setTimeout(() => {
+      if (viewRef.current.type !== "home") return;
+      const now = Date.now();
+      const lastAttemptAt = Math.max(loadLastCloudBackupAttemptAt() ?? Number.NEGATIVE_INFINITY, autoBackupAttemptRef.current ?? Number.NEGATIVE_INFINITY);
+      const state = {
+        enabled: loadAutoCloudBackup(),
+        lastSuccessAt: loadLastCloudBackupAt(),
+        lastAttemptAt: Number.isFinite(lastAttemptAt) ? lastAttemptAt : null,
+      };
+      if (!shouldAutoBackup(now, state)) return;
+      autoBackupAttemptRef.current = now;
+      saveLastCloudBackupAttemptAt(now);
+      setBackupNotice(null);
+      uploadBackup(token)
+        .then((result) => {
+          saveLastCloudBackupAt(result.exportedAt);
+          saveCloudBackupError(null);
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : "GitHub への保存に失敗しました。";
+          saveCloudBackupError({ at: now, message });
+          setBackupNotice(`GitHub への進捗バックアップに失敗しました: ${message}`);
+        });
+    }, AUTO_BACKUP_DELAY_MS);
   }
 
   /** タブを切り替える。設定から離れるときは、変えた内容を反映するために取り直す */
@@ -595,6 +645,7 @@ export function App() {
           {snapshot.warnings.map((warning) => (
             <p key={warning} className="notice warning">{warning}</p>
           ))}
+          {backupNotice && <p className="notice warning">{backupNotice} 設定画面で確認してください。</p>}
           {snapshot.decks.length === 0 && !snapshot.offline && <p className="muted">デッキがありません。decks/ に JSON を追加してください。</p>}
           {snapshot.decks.length > 0 && <h2>マイデッキ</h2>}
           {snapshot.decks.length > 0 && (

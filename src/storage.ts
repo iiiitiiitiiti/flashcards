@@ -79,6 +79,93 @@ export function saveLastBackupAt(value: number): void {
   }
 }
 
+const AUTO_CLOUD_BACKUP_KEY = "flashcards:cloud-backup-auto";
+const LAST_CLOUD_BACKUP_KEY = "flashcards:last-cloud-backup-at";
+const LAST_CLOUD_BACKUP_ATTEMPT_KEY = "flashcards:last-cloud-backup-attempt-at";
+const CLOUD_BACKUP_ERROR_KEY = "flashcards:cloud-backup-last-error";
+
+/** 学習を終えたとき GitHub へ自動で保存するか。既定は有効（トークンが無ければ何もしない） */
+export function loadAutoCloudBackup(): boolean {
+  try {
+    return localStorage.getItem(AUTO_CLOUD_BACKUP_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function saveAutoCloudBackup(enabled: boolean): void {
+  try {
+    localStorage.setItem(AUTO_CLOUD_BACKUP_KEY, enabled ? "on" : "off");
+  } catch {
+    // 保存できなくても既定（有効）で動く
+  }
+}
+
+/** GitHub へ最後に保存できた時刻（成功時のみ更新） */
+export function loadLastCloudBackupAt(): number | null {
+  return loadTimestamp(LAST_CLOUD_BACKUP_KEY);
+}
+
+export function saveLastCloudBackupAt(value: number): void {
+  saveTimestamp(LAST_CLOUD_BACKUP_KEY, value);
+}
+
+/** GitHub へ最後に保存を試みた時刻（失敗でも更新。失敗の連打を抑える） */
+export function loadLastCloudBackupAttemptAt(): number | null {
+  return loadTimestamp(LAST_CLOUD_BACKUP_ATTEMPT_KEY);
+}
+
+export function saveLastCloudBackupAttemptAt(value: number): void {
+  saveTimestamp(LAST_CLOUD_BACKUP_ATTEMPT_KEY, value);
+}
+
+export interface CloudBackupError {
+  at: number;
+  message: string;
+}
+
+/** 直近の自動バックアップの失敗。成功したら消す */
+export function loadCloudBackupError(): CloudBackupError | null {
+  try {
+    const raw = localStorage.getItem(CLOUD_BACKUP_ERROR_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const { at, message } = parsed as Partial<CloudBackupError>;
+    return typeof at === "number" && Number.isFinite(at) && typeof message === "string" ? { at, message } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveCloudBackupError(value: CloudBackupError | null): void {
+  try {
+    if (value === null) localStorage.removeItem(CLOUD_BACKUP_ERROR_KEY);
+    else localStorage.setItem(CLOUD_BACKUP_ERROR_KEY, JSON.stringify(value));
+  } catch {
+    // 記録できなくても致命的ではない
+  }
+}
+
+function loadTimestamp(key: string): number | null {
+  try {
+    const value = localStorage.getItem(key);
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTimestamp(key: string, value: number): void {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    // 記録できなくても致命的ではない
+  }
+}
+
 export function tokenPersistence(): "local" | "session" | "none" {
   try {
     if (sessionStorage.getItem(TOKEN_KEY)) return "session";

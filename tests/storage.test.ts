@@ -118,3 +118,35 @@ describe("loadNewCardsScope", () => {
     expect(loadNewCardsScope()).toBe("deck");
   });
 });
+
+describe("自動バックアップの設定", () => {
+  beforeEach(() => {
+    store.clear();
+  });
+
+  it("未設定なら有効。off を保存すると無効、それ以外の壊れた値は有効に戻る", async () => {
+    const { loadAutoCloudBackup, saveAutoCloudBackup } = await import("../src/storage");
+    expect(loadAutoCloudBackup()).toBe(true);
+    saveAutoCloudBackup(false);
+    expect(loadAutoCloudBackup()).toBe(false);
+    saveAutoCloudBackup(true);
+    expect(loadAutoCloudBackup()).toBe(true);
+    store.set("flashcards:cloud-backup-auto", "garbage");
+    expect(loadAutoCloudBackup()).toBe(true);
+  });
+
+  it("成功時刻・試行時刻・直近の失敗を別々に持つ。失敗は null で消える", async () => {
+    const storage = await import("../src/storage");
+    expect(storage.loadLastCloudBackupAt()).toBeNull();
+    storage.saveLastCloudBackupAt(100);
+    storage.saveLastCloudBackupAttemptAt(200);
+    expect(storage.loadLastCloudBackupAt()).toBe(100);
+    expect(storage.loadLastCloudBackupAttemptAt()).toBe(200);
+    storage.saveCloudBackupError({ at: 300, message: "だめ" });
+    expect(storage.loadCloudBackupError()).toEqual({ at: 300, message: "だめ" });
+    storage.saveCloudBackupError(null);
+    expect(storage.loadCloudBackupError()).toBeNull();
+    store.set("flashcards:cloud-backup-last-error", "{broken");
+    expect(storage.loadCloudBackupError()).toBeNull();
+  });
+});
