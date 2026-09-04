@@ -3,7 +3,8 @@
  * 日付の区切りは学習キューと同じ Asia/Tokyo（`dayKey`）に揃える。
  */
 import type { Deck } from "./deck";
-import { dayKey, FSRS_STATE_REVIEW, isWeakCard, retentionPercent } from "./srs";
+import { isDifficultyTag, SHUTSUDAI_TAG } from "./deckedit";
+import { dayKey, FSRS_STATE_REVIEW, isWeakCard, progressKey, retentionPercent } from "./srs";
 import type { ProgressRecord, ReviewLogEntry } from "./types";
 
 export interface DailyStats {
@@ -290,4 +291,67 @@ export function summarizeDecks(decks: Deck[], records: ProgressRecord[], now: Da
   });
   rows.sort((left, right) => right.due - left.due || right.weak - left.weak || left.name.localeCompare(right.name, "ja"));
   return rows;
+}
+
+// ---- タグ別 ----
+
+export interface TagBreakdown {
+  tag: string;
+  /** 出題対象の枚数（非表示を除く）。複数タグのカードはそれぞれのタグに数える */
+  cardCount: number;
+  /** 定着率。分母はこのタグの付いたカード */
+  retentionPercent: number;
+  /** いま復習できる枚数（`due <= now`） */
+  due: number;
+  /** 苦手カード（`isWeakCard`） */
+  weak: number;
+}
+
+/**
+ * タグごとの内訳。`decks` は非表示を除いたもの（`visibleDeck`）を渡す。
+ * タグの無いカードは数えない。同じタグが 1 枚に 2 回付いていても 1 回、空文字のタグは無視する。
+ * 並びはデッキ別と同じ「復習 → 苦手 → 枚数 → 名前」（やるべき所が上に来る）
+ */
+export function summarizeTags(decks: Deck[], records: ProgressRecord[], now: Date): TagBreakdown[] {
+  const progressByKey = new Map(records.map((record) => [progressKey(record.deckId, record.cardId), record.progress]));
+  const rows = new Map<string, { cardCount: number; touched: { reps: number; state: number }[]; due: number; weak: number }>();
+  for (const deck of decks) {
+    for (const card of deck.cards) {
+      if (!card.tags || card.tags.length === 0) continue;
+      const progress = progressByKey.get(progressKey(deck.id, card.id));
+      for (const tag of new Set(card.tags)) {
+        if (tag === "") continue;
+        let row = rows.get(tag);
+        if (!row) {
+          row = { cardCount: 0, touched: [], due: 0, weak: 0 };
+          rows.set(tag, row);
+        }
+        row.cardCount += 1;
+        if (!progress) continue;
+        row.touched.push(progress);
+        if (progress.due <= now.getTime()) row.due += 1;
+        if (isWeakCard(progress)) row.weak += 1;
+      }
+    }
+  }
+  const result: TagBreakdown[] = [...rows].map(([tag, row]) => ({
+    tag,
+    cardCount: row.cardCount,
+    retentionPercent: retentionPercent(row.touched, row.cardCount),
+    due: row.due,
+    weak: row.weak,
+  }));
+  result.sort(
+    (left, right) =>
+      right.due - left.due || right.weak - left.weak || right.cardCount - left.cardCount || left.tag.localeCompare(right.tag, "ja"),
+  );
+  return result;
+}
+
+/**
+ * 統計の既定で出すタグ。難易度（★）と「出題済み」はデッキをまたいで付く共通タグで、
+ * 185 種の小ジャンルを全部並べると ★★★ が沈む。データの分布（何デッキに付くか）に頼らず、意味で決める
+ */
+export function isCommonTag(tag: string): boolean {
+  return isDifficultyTag(tag) || tag === SHUTSUDAI_TAG;
 }

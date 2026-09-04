@@ -6,12 +6,14 @@ import {
   buildMonthCells,
   buildVisibleCardIndex,
   dueForecast,
+  isCommonTag,
   isFutureMonth,
   monthlyTrend,
   shiftMonth,
   studiedDays,
   summarizeDay,
   summarizeDecks,
+  summarizeTags,
   summarizeTotal,
   summarizeTrend,
   tallyByDay,
@@ -166,6 +168,8 @@ export function StatsView({ snapshot }: StatsViewProps) {
   const today = useMemo(() => dayKey(now), [now]);
   const [selected, setSelected] = useState(today);
   const [forecastSpan, setForecastSpan] = useState<ForecastSpan>(7);
+  /** タグ別を全タグに広げているか。既定は ★ と「出題済み」だけ。覚えない */
+  const [allTagsShown, setAllTagsShown] = useState(false);
   const [cursor, setCursor] = useState(() => {
     const [year, month] = today.split("-").map(Number);
     return { year, month };
@@ -222,6 +226,11 @@ export function StatsView({ snapshot }: StatsViewProps) {
   const forecastDays = useMemo(() => forecast.days.slice(0, forecastSpan), [forecast, forecastSpan]);
   const forecastTotal = forecastDays.reduce((sum, day) => sum + day.count, 0);
   const breakdown = useMemo(() => summarizeDecks(decks, records, now), [decks, records, now]);
+  const tagRows = useMemo(() => summarizeTags(decks, records, now), [decks, records, now]);
+  const commonTagRows = useMemo(() => tagRows.filter((row) => isCommonTag(row.tag)), [tagRows]);
+  /** ★ も出題済みも無いデータ（手書きデッキだけ）なら、絞る意味が無いので最初から全タグ */
+  const canNarrowTags = commonTagRows.length > 0 && commonTagRows.length < tagRows.length;
+  const shownTagRows = allTagsShown || !canNarrowTags ? tagRows : commonTagRows;
 
   const nextMonth = shiftMonth(cursor.year, cursor.month, 1);
   const canGoNext = !isFutureMonth(nextMonth.year, nextMonth.month, new Date());
@@ -371,6 +380,54 @@ export function StatsView({ snapshot }: StatsViewProps) {
         </table>
       )}
 
+      <div className="section-head">
+        <h2>タグ別</h2>
+        {!loading && canNarrowTags && (
+          <button
+            type="button"
+            className="link-button"
+            aria-expanded={allTagsShown}
+            aria-controls="tag-table"
+            onClick={() => setAllTagsShown((shown) => !shown)}
+          >
+            {allTagsShown ? "★と出題済みだけにする" : `すべてのタグを表示（${tagRows.length.toLocaleString("ja-JP")} 種）`}
+          </button>
+        )}
+      </div>
+      {!loading && snapshot === null && <p className="muted">デッキを読み込むと出ます。</p>}
+      {!loading && snapshot !== null && tagRows.length === 0 && <p className="muted">タグの付いたカードがありません。</p>}
+      {!loading && snapshot !== null && shownTagRows.length > 0 && (
+        <table className="deck-table" id="tag-table">
+          <caption className="visually-hidden">タグごとの定着率・復習できる枚数・苦手カードの枚数</caption>
+          <thead>
+            <tr>
+              <th scope="col">タグ</th>
+              <th scope="col">定着率</th>
+              <th scope="col">復習</th>
+              <th scope="col">苦手</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shownTagRows.map((row) => (
+              <tr key={row.tag}>
+                <th scope="row">
+                  <span className="deck-table-name">{row.tag}</span>
+                  <span className="deck-table-count">{row.cardCount.toLocaleString("ja-JP")}枚</span>
+                </th>
+                <td>
+                  <span className="deck-bar" aria-hidden="true">
+                    <span style={{ width: `${Math.min(100, row.retentionPercent)}%` }} />
+                  </span>
+                  {formatPercent(row.retentionPercent)}%
+                </td>
+                <td className={row.due === 0 ? "deck-table-zero" : undefined}>{row.due.toLocaleString("ja-JP")}</td>
+                <td className={row.weak === 0 ? "deck-table-zero" : undefined}>{row.weak.toLocaleString("ja-JP")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
       <h2>学習状況（全期間）</h2>
       <div className="stat-grid">
         <StatCard label="プレイ時間(分)" value={total.playMinutes} icon={<ClockIcon />} />
@@ -386,7 +443,8 @@ export function StatsView({ snapshot }: StatsViewProps) {
       )}
       <p className="muted stats-note">
         プレイ時間は2026年8月26日以降に学習したぶんだけ記録されます。1枚あたり5分を超えた時間は、席を外したものとして数えません。
-        復習予定とデッキ別は、非表示のカードと消えたデッキを数えません。日別の推移は直近400日の記録から集計し、非表示のカードも含みます。
+        復習予定・デッキ別・タグ別は、非表示のカードと消えたデッキを数えません。タグ別は複数のタグを持つカードをそれぞれのタグに数えるので、行の合計は総枚数と一致しません。
+        日別の推移は直近400日の記録から集計し、非表示のカードも含みます。
       </p>
     </section>
   );
