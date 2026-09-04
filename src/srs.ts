@@ -1,6 +1,6 @@
 import { createEmptyCard, fsrs, type Card, type Grade } from "ts-fsrs";
 import type { Deck, DeckCard } from "./deck";
-import type { ProgressDTO, ProgressRecord, RatingThresholds, ReviewRating } from "./types";
+import type { ProgressDTO, ProgressRecord, RatingThresholds, ReviewRating, StudyFocus } from "./types";
 
 // ts-fsrs の型・オブジェクトはこのファイルの外へ出さない。
 // 永続化は ProgressDTO（epoch ミリ秒・formatVersion 付き）のみを使う。
@@ -203,8 +203,14 @@ export function buildStudyQueue(
    * 全デッキ合計で制限するときは、呼び出し側が全デッキぶんを数えて渡す。
    */
   usedNewCardsToday?: number,
+  focus: StudyFocus = "all",
+  /** 苦手だけのとき、この時刻以降に評価したカードは出さない（ドリルを開いた時刻。「つづける」でも引き継ぐ） */
+  weakSince: number | null = null,
 ): StudyQueue {
   const progressByCard = new Map(progressRecords.map((record) => [record.cardId, record]));
+  if (focus === "weak") {
+    return { due: weakCards(deck, progressByCard, tag, weakSince), fresh: [], freshHeldBack: 0 };
+  }
   // タグでは絞らない。タグを変えるたびに枠が増えると、1日の上限が意味を失う
   const used = usedNewCardsToday ?? countIntroducedToday(progressRecords, now);
   // 0 は無制限。数万問のデッキを早押しで回すときに使う
@@ -232,6 +238,47 @@ export function buildStudyQueue(
     fresh,
     freshHeldBack: freshTotal - fresh.length,
   };
+}
+
+/** 苦手判定に使う「出しても定着しない」回数。既定の学習ステップは2つなので、3回以上で Review に届いていなければ躓いている */
+export const WEAK_MIN_REPS = 3;
+/** これ以上の間隔が付いたカードは「身についた」とみなし、過去に忘れていても苦手から外す（Anki の mature と同じ 21 日） */
+export const WEAK_MATURE_DAYS = 21;
+/** FSRS の difficulty（1〜10）がこれ以上なら「難しい」を押し続けているカード。1回目の「もう一度」で 6.4、2回で 8.8 になる */
+export const WEAK_DIFFICULTY = 8;
+
+/**
+ * 苦手カードか。次のどれか。
+ * - **3回以上出してもまだ定着していない**（学習中の「もう一度」は lapses に数えられず reps だけ増える。
+ *   2026-09-04 に ts-fsrs で実測: again×3 → Learning・reps 3・lapses 0）
+ * - **間隔が 21 日未満のうちに、忘れたことがある**（lapses ≥ 1。FSRS は Review → Relearning でしか数えず、減ることもない。
+ *   期限で切らないと、半年前に1回忘れただけのカードが永久に苦手になる）
+ * - **間隔が 21 日未満のうちに、難しさが 8 以上**（Review のまま「難しい」を押し続けるカードは lapses が増えないので、ここで拾う）
+ * 新規（進捗なし）は苦手に含めない。
+ */
+export function isWeakCard(progress: ProgressDTO): boolean {
+  if (progress.reps >= WEAK_MIN_REPS && progress.state !== FSRS_STATE_REVIEW) return true;
+  if (progress.scheduledDays >= WEAK_MATURE_DAYS) return false;
+  return progress.lapses >= 1 || progress.difficulty >= WEAK_DIFFICULTY;
+}
+
+/**
+ * 苦手カードを「忘れた回数 → 難しさ」の降順で返す。期限前でも出す。
+ * `reviewedSince` 以降に評価したカードは除く。苦手は1回「わかった」でも苦手のままなので、
+ * ドリルを始めた時刻を渡さないと結果画面の「つづける」が同じカードを際限なく出す。
+ * 開き直せば（時刻が進むので）同じカードをもう一度ドリルできる
+ */
+function weakCards(deck: Deck, progressByCard: Map<string, ProgressRecord>, tag: string | null, reviewedSince: number | null): DeckCard[] {
+  const weak: { card: DeckCard; progress: ProgressDTO }[] = [];
+  for (const card of deck.cards) {
+    if (tag && !(card.tags ?? []).includes(tag)) continue;
+    const record = progressByCard.get(card.id);
+    if (!record || !isWeakCard(record.progress)) continue;
+    if (reviewedSince !== null && record.progress.lastReview !== null && record.progress.lastReview >= reviewedSince) continue;
+    weak.push({ card, progress: record.progress });
+  }
+  weak.sort((left, right) => right.progress.lapses - left.progress.lapses || right.progress.difficulty - left.progress.difficulty);
+  return weak.map((entry) => entry.card);
 }
 
 /** 定着率の表示。小さい値でも進みが見えるように、10%未満は小数第1位まで出す */

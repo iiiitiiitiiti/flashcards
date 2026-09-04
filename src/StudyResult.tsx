@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatPercent } from "./srs";
-import type { ReviewRating, StudyMode } from "./types";
+import type { ReviewRating, StudyFocus, StudyMode } from "./types";
 
 /** このセッションで評価した1枚ぶんの記録 */
 export interface SessionEntry {
@@ -34,6 +34,8 @@ interface StudyResultProps {
   onUndo: () => void;
   /** 絞り込んで学習していたタグ。残り0枚の案内を「デッキ」ではなくタグで書くのに使う */
   tag: string | null;
+  /** 苦手だけの学習だったか。残り0枚の案内を分ける */
+  focus?: StudyFocus;
   onContinue: () => void;
   onFinish: () => void;
 }
@@ -132,7 +134,7 @@ function Gauge({ percent }: { percent: number }) {
   );
 }
 
-export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, busy, tag, onUndo, onContinue, onFinish }: StudyResultProps) {
+export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, busy, tag, focus = "all", onUndo, onContinue, onFinish }: StudyResultProps) {
   const labels = mode === "buzzer" ? BUZZER_RATING_LABELS : RATING_LABELS;
 
   return (
@@ -165,7 +167,9 @@ export function StudyResult({ mode, entries, percent, phaseGain, reason, canCont
         </div>
         {reason === "completed" && !canContinue && (
           <p className="muted">
-            {tag === null ? "このデッキ" : `「${tag}」`}で今日出せるカードは終わりました。
+            {focus === "weak"
+              ? `${tag === null ? "このデッキ" : `「${tag}」`}の苦手カードは一通り復習しました。もう一度やるなら、ホームから開き直してください。`
+              : `${tag === null ? "このデッキ" : `「${tag}」`}で今日出せるカードは終わりました。`}
           </p>
         )}
       </div>
