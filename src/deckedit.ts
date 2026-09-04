@@ -131,29 +131,30 @@ export function validateGeneratedTags(tags: string[]): string | null {
 }
 
 /**
- * Contents API で書き込めるデッキ JSON の上限。GitHub はこれを超えるファイルの本文を返さないので、
- * 1MB を超えるデッキ（公民・理系・生活）はアプリから書き戻せない。移動先・移動元の候補から外す
+ * アプリから書き込めるデッキ JSON の上限。Contents API は 1MB 超の本文を返さないが、
+ * 読みは Blob API（100MB まで）で迂回し、PUT 自体に 1MB の壁は無い（`github.ts` の `getDeckContents`）。
+ * 100MB を超えると Contents API そのものが対象外になるので、そこを上限にする
  */
-export const MAX_WRITABLE_DECK_BYTES = 1_000_000;
+export const MAX_WRITABLE_DECK_BYTES = 100_000_000;
 
 export function deckJsonBytes(deck: Deck): number {
   return new TextEncoder().encode(`${JSON.stringify(deck, null, 2)}\n`).length;
 }
 
-export function isWritableDeck(deck: Deck): boolean {
-  return deckJsonBytes(deck) <= MAX_WRITABLE_DECK_BYTES;
+export function isWritableDeck(deck: Deck, limit: number = MAX_WRITABLE_DECK_BYTES): boolean {
+  return deckJsonBytes(deck) <= limit;
 }
 
 /**
  * カードの移動先にできるデッキ。**同じ群**（xlsx 生成デッキ同士 / 手書きデッキ同士）に限る。
  * 群をまたぐと decks:sync が「xlsx の行が消えた／増えた」と見て止まるため。
- * 自分自身と、Contents API で書けない大きさのデッキは除く。移動元が書けないときは空
+ * 自分自身と、GitHub API で書けない大きさのデッキは除く。移動元が書けないときは空
  */
-export function moveTargets(current: Deck, all: Deck[]): Deck[] {
-  if (!isWritableDeck(current)) return [];
+export function moveTargets(current: Deck, all: Deck[], limit: number = MAX_WRITABLE_DECK_BYTES): Deck[] {
+  if (!isWritableDeck(current, limit)) return [];
   const generated = isGeneratedDeck(current);
   return all
-    .filter((deck) => deck.id !== current.id && isGeneratedDeck(deck) === generated && isWritableDeck(deck))
+    .filter((deck) => deck.id !== current.id && isGeneratedDeck(deck) === generated && isWritableDeck(deck, limit))
     .sort((left, right) => left.name.localeCompare(right.name, "ja"));
 }
 
