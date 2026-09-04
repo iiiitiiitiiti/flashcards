@@ -115,3 +115,33 @@ describe("base64 helpers", () => {
     expect(decodeBase64Utf8(encodeBase64Utf8(text))).toBe(text);
   });
 });
+
+describe("writeDeck（1MB 超のデッキ）", () => {
+  it("Contents API が本文を返さないときは Blob API で本文を取り、同じ sha で PUT する", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push(`${init?.method ?? "GET"} ${url.replace("https://api.github.com", "")}`);
+        if ((init?.method ?? "GET") === "GET" && url.includes("/contents/")) {
+          // 1MB 超: content は空・encoding は "none"・sha だけ返る（2026-09-04 実 API で確認）
+          return new Response(JSON.stringify({ content: "", encoding: "none", sha: "big-sha", size: 1_153_842 }), { status: 200 });
+        }
+        if ((init?.method ?? "GET") === "GET" && url.includes("/git/blobs/big-sha")) {
+          // Blob API の base64 は 60 文字ごとに改行が入る
+          const encoded = encodeBase64Utf8(deckJson("大きい")).replace(/(.{60})/g, "$1\n");
+          return new Response(JSON.stringify({ content: encoded, encoding: "base64", sha: "big-sha" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ content: {} }), { status: 200 });
+      }),
+    );
+    const result = await writeDeck("alpha", "token", "msg", (deck: Deck) => upsertCard(deck, { id: "002", front: "追加", back: "答2" }));
+    expect(result.cards.map((card) => card.front)).toEqual(["大きい", "追加"]);
+    expect(calls).toEqual([
+      "GET /repos/iiiitiiitiiti/flashcards/contents/decks/alpha.json?ref=main",
+      "GET /repos/iiiitiiitiiti/flashcards/git/blobs/big-sha",
+      "PUT /repos/iiiitiiitiiti/flashcards/contents/decks/alpha.json",
+    ]);
+  });
+});

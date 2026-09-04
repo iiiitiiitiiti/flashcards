@@ -153,15 +153,34 @@ const MAX_WRITE_ATTEMPTS = 3;
 let writeQueue: Promise<unknown> = Promise.resolve();
 
 /** Contents API から最新のデッキ本文と blob SHA を取得する（書き込み用） */
+/**
+ * Contents API から最新のデッキ本文と blob SHA を取得する（書き込み用）。
+ *
+ * Contents API は **1MB を超えるファイルの本文を返さない**（`encoding: "none"`・`content: ""`。sha は返す）。
+ * その場合は Blob API（`/git/blobs/{sha}`、100MB まで）で本文を取る。PUT 側には 1MB の壁は無く、
+ * 2026-09-04 に一時ブランチ `api-probe` で 1.15MB の PUT が成功することを実 API で確認した（`docs/decisions/009`）。
+ */
 async function getDeckContents(deckId: string, token: string): Promise<{ raw: string; sha: string }> {
   const response = await apiRequest<ContentsResponse>(
     `/repos/${OWNER}/${REPOSITORY}/contents/decks/${encodeURIComponent(deckId)}.json?ref=${BRANCH}`,
     token,
   );
-  if (response.status !== 200 || !response.data.content || response.data.encoding !== "base64" || !response.data.sha) {
+  if (response.status !== 200 || !response.data.sha) {
     throw new Error(`デッキ「${deckId}」の最新版を取得できませんでした (${response.status})`);
   }
-  return { raw: decodeBase64Utf8(response.data.content), sha: response.data.sha };
+  if (response.data.content && response.data.encoding === "base64") {
+    return { raw: decodeBase64Utf8(response.data.content), sha: response.data.sha };
+  }
+  return { raw: await fetchBlob(deckId, response.data.sha, token), sha: response.data.sha };
+}
+
+/** Blob API で本文を取る（1MB 超のデッキ用）。base64 は改行入りで返るが decodeBase64Utf8 が空白を落とす */
+async function fetchBlob(deckId: string, sha: string, token: string): Promise<string> {
+  const response = await apiRequest<ContentsResponse>(`/repos/${OWNER}/${REPOSITORY}/git/blobs/${sha}`, token);
+  if (response.status !== 200 || !response.data.content || response.data.encoding !== "base64") {
+    throw new Error(`デッキ「${deckId}」の本文を取得できませんでした (${response.status})`);
+  }
+  return decodeBase64Utf8(response.data.content);
 }
 
 /**

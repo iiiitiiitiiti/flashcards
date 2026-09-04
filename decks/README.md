@@ -75,7 +75,7 @@ npm run validate:decks
 - Q列が数値でない行（60件）は問題文の SHA-1 先頭10桁に `h` を付けた id にする。**該当行の問題文を書き換えると id が変わり、その問題の学習進捗は失われる**
 - 問題の大ジャンルを xlsx 側で変更すると、そのカードは別デッキへ移動する。進捗は (デッキ id, カード id) で持つため、**ジャンルを変えると学習進捗は引き継がれない**
 - **大ジャンルの問題がすべて無くなっても、そのデッキの JSON は残る**（importer は書き込むだけで削除しない）。デッキごと廃止するときは手でファイルを消す
-- 1MB を超えるデッキ（quiz-koumin / quiz-rikei / quiz-seikatsu）は、GitHub Contents API の制限でアプリ内の「カード追加」「CSV取込」「編集」「移動」が使えない。xlsx 側で管理すること
+- 1MB を超えるデッキ（quiz-koumin / quiz-rikei / quiz-seikatsu）も、2026-09-04 からアプリで編集・移動できる（Contents API が本文を返さないぶんを Blob API で読む。`docs/decisions/009`）
 
 ## アプリからの編集と再生成（2026-09-04）
 

@@ -115,11 +115,14 @@ describe("moveTargets / tagsForMove", () => {
     expect(moveTargets(hand("kanji"), all)).toEqual([]);
   });
 
-  it("1MB を超えるデッキは候補から外し、移動元が超えていれば空", () => {
-    const huge: Deck = { ...generated("quiz-huge"), cards: Array.from({ length: 12_000 }, (_, index) => ({ id: String(index), front: "あ".repeat(30), back: "い".repeat(10) })) };
+  it("上限を超えるデッキは候補から外し、移動元が超えていれば空", () => {
+    const huge: Deck = { ...generated("quiz-huge"), cards: Array.from({ length: 200 }, (_, index) => ({ id: String(index), front: "あ".repeat(30), back: "い".repeat(10) })) };
     const all = [huge, generated("quiz-a"), generated("quiz-b")];
-    expect(moveTargets(generated("quiz-a"), all).map((deck) => deck.id)).toEqual(["quiz-b"]);
-    expect(moveTargets(huge, all)).toEqual([]);
+    // 上限を小さくして挙動だけ確かめる（既定の 100MB はテストで作れない）
+    expect(moveTargets(generated("quiz-a"), all, 10_000).map((deck) => deck.id)).toEqual(["quiz-b"]);
+    expect(moveTargets(huge, all, 10_000)).toEqual([]);
+    // 既定の上限では 1MB 級のデッキも候補に入る（Blob API で読めるため）
+    expect(moveTargets(generated("quiz-a"), all).map((deck) => deck.id)).toEqual(["quiz-b", "quiz-huge"]);
   });
 
   it("生成デッキ間の移動では小ジャンルを落として難易度と出題済みを残す", () => {
