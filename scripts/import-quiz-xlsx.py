@@ -9,8 +9,8 @@
 何度実行しても同じ入力からは同じ出力になる（冪等）。
 カード id は学習進捗の紐づけキーなので、**絶対に振り直さない**こと。
 - A列「No.」は `=ROW()-1` の数式で並べ替えるとずれるため使わない
-- Q列「No」（静的な通し番号）を5桁ゼロ埋めして id にする
-- Q列が数値でない行（60件ほどある）は問題文の SHA-1 先頭10桁に "h" を付けた id にする
+- 「No」列（静的な通し番号。2026-09 時点で U 列）を5桁ゼロ埋めして id にする。列はヘッダー名で探す
+- 「No」が数値でない行は問題文の SHA-1 先頭10桁に "h" を付けた id にする
 """
 
 import hashlib
@@ -29,15 +29,33 @@ DEFAULT_XLSX = (
 SHEET = "ノンジャンルクイズ"
 DECKS_DIR = Path(__file__).resolve().parent.parent / "decks"
 
-# 列位置（0 始まり）
-COL_SHUTSUDAI = 2
-COL_DIFFICULTY = 3
-COL_QUESTION = 4
-COL_ANSWER = 5
-COL_NOTE = 6
-COL_GENRE = 7
-COL_SUBGENRE = 8
-COL_SERIAL = 16
+# 列はヘッダー名で探す（2026-09-04）。以前は固定位置（Q列 = 16）で読んでいたが、
+# xlsx に列が挿入されて「No」が U 列へ動き、固定位置のままだと全カードが h 付きの
+# ハッシュ id になって学習進捗が全部孤児になるところだった。
+# 値は「ヘッダー名, 前方一致か」。問題文の見出しは「問題文（問題数：29772）」のように件数を含む
+COLUMN_HEADERS = {
+    "shutsudai": ("出題", False),
+    "difficulty": ("難易度", False),
+    "question": ("問題文", True),
+    "answer": ("解答", False),
+    "note": ("別解･正誤判定基準･補足", False),
+    "genre": ("大ジャンル", False),
+    "subgenre": ("小ジャンル", False),
+    # 静的な通し番号。A列の「No.」（ピリオド付き・=ROW()-1 の数式）とは別物
+    "serial": ("No", False),
+}
+
+
+def locate_columns(header: tuple) -> dict[str, int]:
+    """ヘッダー行から各列の位置（0 始まり）を返す。見つからない・複数あるなら止める"""
+    names = [text(cell) for cell in header]
+    found: dict[str, int] = {}
+    for key, (name, prefix) in COLUMN_HEADERS.items():
+        hits = [i for i, n in enumerate(names) if (n.startswith(name) if prefix else n == name)]
+        if len(hits) != 1:
+            raise SystemExit(f"ヘッダー「{name}」が {len(hits)} 列見つかりました（1列でなければなりません）: {names}")
+        found[key] = hits[0]
+    return found
 
 # 大ジャンル → デッキ id。**一度決めたら変更しない**（ファイル名 = 進捗のキー）
 GENRE_DECKS: dict[str, tuple[str, str]] = {
@@ -81,7 +99,7 @@ def main() -> int:
 
     sheet = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)[SHEET]
     rows = sheet.iter_rows(values_only=True)
-    next(rows)  # ヘッダー
+    col = locate_columns(next(rows))  # ヘッダー
 
     decks: dict[str, dict] = {}
     seen_ids: dict[str, dict[str, int]] = {}
@@ -89,12 +107,12 @@ def main() -> int:
     duplicates: list[str] = []
 
     for row_number, row in enumerate(rows, start=2):
-        question, answer = text(row[COL_QUESTION]), text(row[COL_ANSWER])
+        question, answer = text(row[col["question"]]), text(row[col["answer"]])
         if not question or not answer:
             skipped_empty += 1
             continue
 
-        genre = text(row[COL_GENRE])
+        genre = text(row[col["genre"]])
         deck_id, deck_name = GENRE_DECKS.get(genre, FALLBACK_DECK)
         deck = decks.setdefault(
             deck_id,
@@ -102,7 +120,7 @@ def main() -> int:
         )
         ids = seen_ids.setdefault(deck_id, {})
 
-        identifier = card_id(row[COL_SERIAL], question)
+        identifier = card_id(row[col["serial"]], question)
         if not ID_PATTERN.match(identifier):
             raise SystemExit(f"id が規約に合いません: {identifier!r}")
         if identifier in ids:
@@ -115,13 +133,13 @@ def main() -> int:
         ids[identifier] = row_number
 
         card = {"id": identifier, "front": question, "back": answer}
-        note = text(row[COL_NOTE])
+        note = text(row[col["note"]])
         if note:
             card["note"] = note
-        tags = [tag for tag in (text(row[COL_SUBGENRE]), text(row[COL_DIFFICULTY])) if tag]
+        tags = [tag for tag in (text(row[col["subgenre"]]), text(row[col["difficulty"]])) if tag]
         if genre and genre not in GENRE_DECKS:
             tags.append(genre)
-        if text(row[COL_SHUTSUDAI]):
+        if text(row[col["shutsudai"]]):
             tags.append("出題済み")
         if tags:
             card["tags"] = tags
@@ -137,7 +155,8 @@ def main() -> int:
     for deck_id, deck in sorted(decks.items()):
         deck["description"] = f"クイズ.xlsx「{SHEET}」より {len(deck['cards'])} 問"
         path = DECKS_DIR / f"{deck_id}.json"
-        path.write_text(json.dumps(deck, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # Windows で実行しても改行を LF に固定する（既定だと CRLF になり、全行が差分になる）
+        path.write_text(json.dumps(deck, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
         size = path.stat().st_size / 1024
         total += len(deck["cards"])
         print(f"{path.name:24} {len(deck['cards']):6} 問  {size:8.0f} KB")
