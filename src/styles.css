@@ -1793,6 +1793,20 @@ textarea {
   gap: 8px;
 }
 
+/* 見出し横の文字だけのボタン（タグ別の「すべてのタグを表示」）。枠を持たず、リンクのように見せる */
+.link-button {
+  min-height: 30px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-primary);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
 .segment {
   display: inline-flex;
   border: 1px solid var(--color-border);

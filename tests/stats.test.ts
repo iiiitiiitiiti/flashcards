@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Deck } from "../src/deck";
-import { buildStudyQueue, dayKey, isWeakCard, rate, retentionPercent } from "../src/srs";
+import { buildStudyItems, buildStudyQueue, dayKey, isWeakCard, rate, retentionPercent } from "../src/srs";
 import {
   buildMonthCells,
   buildVisibleCardIndex,
@@ -10,7 +10,9 @@ import {
   shiftMonth,
   studiedDays,
   summarizeDay,
+  isCommonTag,
   summarizeDecks,
+  summarizeTags,
   summarizeTotal,
   summarizeTrend,
   tallyByDay,
@@ -305,5 +307,84 @@ describe("summarizeDecks", () => {
       retentionPercent: 0,
       due: 0,
     });
+  });
+});
+
+describe("summarizeTags", () => {
+  function taggedDeck(id: string, cards: { id: string; tags?: string[] }[]): Deck {
+    return { schemaVersion: 1, id, name: id, cards: cards.map((card) => ({ id: card.id, front: card.id, back: card.id, tags: card.tags })) };
+  }
+
+  it("複数タグのカードはそれぞれに数え、デッキ数・復習・苦手・定着率をタグ単位で出す", () => {
+    const deck1 = taggedDeck("deck1", [
+      { id: "001", tags: ["★☆☆", "医学"] },
+      { id: "002", tags: ["★★★", "医学"] },
+      { id: "003", tags: ["医学"] },
+      { id: "004" },
+    ]);
+    const deck2 = taggedDeck("deck2", [{ id: "001", tags: ["★☆☆", "地形"] }]);
+    const weak = { ...rate(null, 3, NOON), reps: 3, state: 1, due: NOON.getTime() + DAY };
+    const records = [
+      dueRecord("deck1", "001", NOON.getTime() - 1), // 復習・定着
+      record({ deckId: "deck1", cardId: "002", progress: weak }), // 苦手
+      dueRecord("deck1", "gone", NOON.getTime() - 1), // 消えたカード
+      dueRecord("deck2", "001", NOON.getTime() + DAY),
+    ];
+    const rows = summarizeTags([deck1, deck2], records, NOON);
+    // 復習 → 苦手 → 枚数 → 名前
+    expect(rows.map((row) => row.tag)).toEqual(["医学", "★☆☆", "★★★", "地形"]);
+    expect(rows[0]).toMatchObject({ cardCount: 3, due: 1, weak: 1 });
+    expect(rows[0].retentionPercent).toBe(retentionPercent([records[0].progress, weak], 3));
+    expect(rows[1]).toMatchObject({ tag: "★☆☆", cardCount: 2, due: 1, weak: 0 });
+    expect(rows[1].retentionPercent).toBe(retentionPercent([records[0].progress, records[3].progress], 2));
+    expect(rows[2]).toMatchObject({ tag: "★★★", cardCount: 1, due: 0, weak: 1, retentionPercent: 0 });
+    expect(rows[3]).toMatchObject({ tag: "地形", cardCount: 1, due: 0, weak: 0 });
+    // 「まとめて学習」でそのタグを選んだときの復習枚数と同じ
+    const items = buildStudyItems([deck1, deck2], records, NOON, { newCardsPerDay: 10, tag: "★☆☆", focus: "all", weakSince: null, includeFresh: false }).items;
+    expect(rows[1].due).toBe(items.length);
+  });
+
+  it("復習も苦手も同じならタグ名順。タグの無いカードだけなら空", () => {
+    const deck = taggedDeck("deck1", [{ id: "001", tags: ["い"] }, { id: "002", tags: ["あ"] }, { id: "003" }]);
+    expect(summarizeTags([deck], [], NOON).map((row) => row.tag)).toEqual(["あ", "い"]);
+    expect(summarizeTags([taggedDeck("deck1", [{ id: "001" }])], [], NOON)).toEqual([]);
+    expect(summarizeTags([], [], NOON)).toEqual([]);
+  });
+
+  it("同じ id が別デッキにあっても進捗を取り違えない", () => {
+    const deck1 = taggedDeck("deck1", [{ id: "001", tags: ["★☆☆"] }]);
+    const deck2 = taggedDeck("deck2", [{ id: "001", tags: ["★★★"] }]);
+    const rows = summarizeTags([deck1, deck2], [dueRecord("deck2", "001", NOON.getTime() - 1)], NOON);
+    expect(rows.find((row) => row.tag === "★☆☆")).toMatchObject({ due: 0, retentionPercent: 0 });
+    expect(rows.find((row) => row.tag === "★★★")?.due).toBe(1);
+  });
+});
+
+describe("summarizeTags の入力の揺れ", () => {
+  function taggedDeck(id: string, cards: { id: string; tags?: string[] }[]): Deck {
+    return { schemaVersion: 1, id, name: id, cards: cards.map((card) => ({ id: card.id, front: card.id, back: card.id, tags: card.tags })) };
+  }
+
+  it("1 枚に同じタグが 2 回付いていても 1 回だけ数え、空文字のタグは無視する", () => {
+    const deck = taggedDeck("deck1", [{ id: "001", tags: ["医学", "医学", ""] }]);
+    const rows = summarizeTags([deck], [dueRecord("deck1", "001", NOON.getTime() - 1)], NOON);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ tag: "医学", cardCount: 1, due: 1 });
+  });
+
+  it("非表示だけのタグは行に出ない（visibleDeck を通した decks を渡す前提）", () => {
+    const deck = taggedDeck("deck1", [{ id: "001", tags: ["古い"] }, { id: "002", tags: ["医学"] }]);
+    const visible = { ...deck, cards: deck.cards.filter((card) => card.id !== "001") };
+    expect(summarizeTags([visible], [dueRecord("deck1", "001", NOON.getTime() - 1)], NOON).map((row) => row.tag)).toEqual(["医学"]);
+  });
+});
+
+describe("isCommonTag", () => {
+  it("難易度（★）と「出題済み」だけが共通タグ", () => {
+    expect(isCommonTag("★☆☆")).toBe(true);
+    expect(isCommonTag("★★★")).toBe(true);
+    expect(isCommonTag("出題済み")).toBe(true);
+    expect(isCommonTag("医学")).toBe(false);
+    expect(isCommonTag("")).toBe(false);
   });
 });
