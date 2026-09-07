@@ -667,6 +667,19 @@ body.study-lock {
 }
 
 /* 自分で書いたメモ。出典側の補足（.study-note）とは見た目を分ける */
+/* 答えの下の外部リンク。カード本体のタップと区別できるよう、小さめの文字と下線で「リンク」に見せる */
+.study-search {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  min-height: 38px;
+  line-height: 30px;
+}
+
 .study-memo {
   margin-top: 12px;
   padding: 10px 12px;

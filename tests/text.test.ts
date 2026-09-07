@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitGraphemes } from "../src/text";
+import { googleSearchUrl, splitGraphemes } from "../src/text";
 
 describe("splitGraphemes", () => {
   it("日本語と英数字を1文字ずつに切る", () => {
@@ -22,5 +22,16 @@ describe("splitGraphemes", () => {
 
   it("結合文字（濁点）を分けない", () => {
     expect(splitGraphemes("が")).toHaveLength(1);
+  });
+});
+
+describe("googleSearchUrl", () => {
+  it("答えをそのまま検索語にし、URL エンコードする", () => {
+    expect(googleSearchUrl("東京")).toBe("https://www.google.com/search?q=%E6%9D%B1%E4%BA%AC");
+    expect(googleSearchUrl("HyperText Markup Language")).toBe("https://www.google.com/search?q=HyperText%20Markup%20Language");
+  });
+
+  it("改行と連続する空白は 1 つに畳み、前後の空白は落とす", () => {
+    expect(googleSearchUrl("  ラファエロ\n（ラファエッロ）  ")).toBe(`https://www.google.com/search?q=${encodeURIComponent("ラファエロ （ラファエッロ）")}`);
   });
 });

@@ -109,6 +109,29 @@ describe("通常学習の1枚ぶん", () => {
   });
 });
 
+describe("答えの Google 検索", () => {
+  it("答えを出すと検索リンクが出て、押してもカードは裏返らない", () => {
+    const { container } = renderStudy();
+    // 通常モードは裏面をあらかじめ描いてめくるので、リンク自体は最初から DOM にある
+    reveal(container);
+    const link = container.querySelector("a.study-search") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe(`https://www.google.com/search?q=${encodeURIComponent("東京")}`);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    fireEvent.click(link);
+    // カード本体のクリックなら裏返って評価ボタンが消えるが、リンクのクリックは伝えない
+    expect(screen.queryByText("わかった")).not.toBeNull();
+    expect(container.querySelector(".flip-inner")?.classList.contains("flipped")).toBe(true);
+  });
+
+  it("早押しでも答えを出すと出る", () => {
+    const { container } = renderStudy({ mode: "buzzer" });
+    fireEvent.click(screen.getByLabelText("押す"));
+    fireEvent.click(screen.getByText("答えを表示"));
+    expect(container.querySelector("a.study-search")?.getAttribute("href")).toContain(encodeURIComponent("東京"));
+  });
+});
+
 describe("直前の評価を取り消す", () => {
   it("初回評価だったカードは、進捗レコードごと消えて元のカードへ戻る", async () => {
     const { container } = renderStudy();
