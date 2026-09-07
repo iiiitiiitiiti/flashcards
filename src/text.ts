@@ -10,3 +10,12 @@ export function splitGraphemes(text: string): string[] {
   if (!segmenter) return Array.from(text);
   return [...segmenter.segment(text)].map((part) => part.segment);
 }
+
+/**
+ * 答えを Google で調べる URL。改行や連続する空白は 1 つに畳む（複数行の答えが 1 つの検索語になる）。
+ * 括弧の読みや別解は消さない。検索エンジン側で十分に扱えるし、何を検索したかが URL から読める
+ */
+export function googleSearchUrl(query: string): string {
+  const compact = query.replace(/\s+/g, " ").trim();
+  return `https://www.google.com/search?q=${encodeURIComponent(compact)}`;
+}

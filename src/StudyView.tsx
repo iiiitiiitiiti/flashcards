@@ -8,7 +8,7 @@ import { describeStorageError } from "./quota";
 import { buildStudyItems, countIntroducedToday, dayKey, formatInterval, previewIntervals, progressKey, rate, ratingFromElapsed, retentionPercent, shuffled, type StudyItem } from "./srs";
 import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds, loadToken } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
-import { splitGraphemes } from "./text";
+import { googleSearchUrl, splitGraphemes } from "./text";
 import { useVisibleViewport } from "./viewport";
 import type { ProgressRecord, ReviewRating, StudyFocus, StudyMode, StudyOrder } from "./types";
 
@@ -103,6 +103,25 @@ const BUZZER_LEAD_IN_MS = 450;
 
 /** キューの1枚。どのデッキのカードかを持つ（デッキをまたぐ学習で保存先を取り違えない） */
 type QueueItem = StudyItem;
+
+/**
+ * 答えを Google で調べるリンク。カード本体はタップで裏返り、横に引くと評価になるので、
+ * リンク上の操作はカードへ伝えない（押した瞬間に裏返って開かない・引きずりが評価にならない）
+ */
+function SearchLink({ query }: { query: string }) {
+  return (
+    <a
+      className="study-search"
+      href={googleSearchUrl(query)}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      Google で答えを検索
+    </a>
+  );
+}
 
 /** 進捗・メモ・キュー操作の鍵。同じ id のカードが別デッキにあっても混ぜない */
 function keyOf(item: { deckId: string; card: { id: string } }): string {
@@ -916,6 +935,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
                     <div className="study-back">{current.card.back}</div>
                     {current.card.note && <div className="study-note muted">{current.card.note}</div>}
                     {notes.has(keyOf(current)) && <div className="study-memo">{notes.get(keyOf(current))}</div>}
+                    <SearchLink query={current.card.back} />
                   </>
                 ) : (
                   <div className="study-front buzzer-text">
@@ -1023,6 +1043,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
                 <hr />
                 <div className="study-back">{current.card.back}</div>
                 {current.card.note && <div className="study-note muted">{current.card.note}</div>}
+                <SearchLink query={current.card.back} />
                 {notes.has(keyOf(current)) && <div className="study-memo">{notes.get(keyOf(current))}</div>}
               </div>
             </div>
