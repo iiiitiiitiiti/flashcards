@@ -228,6 +228,8 @@ console.log("\n== 4/5 HEAD との差分 ==");
 const { rows, removals } = diffDecks(head, await readDecksFromDisk());
 
 if (rows.length === 0) {
+  // 並び順だけの差分は diffDecks が拾わないので、書き出したファイルを HEAD へ戻して作業ツリーを汚さない
+  run("git", ["checkout", "--", "decks"]);
   console.log("変更はありません。");
   process.exit(0);
 }

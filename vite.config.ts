@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
@@ -32,4 +33,8 @@ export default defineConfig({
       },
     }),
   ],
+  test: {
+    // Node 25 はメソッドの無い localStorage をグローバルに置き、jsdom の localStorage を隠す
+    execArgv: ["--no-experimental-webstorage"],
+  },
 });
