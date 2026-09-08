@@ -27,11 +27,11 @@ describe("splitGraphemes", () => {
 
 describe("googleSearchUrl", () => {
   it("答えをそのまま検索語にし、URL エンコードする", () => {
-    expect(googleSearchUrl("東京")).toBe("https://www.google.com/search?q=%E6%9D%B1%E4%BA%AC");
-    expect(googleSearchUrl("HyperText Markup Language")).toBe("https://www.google.com/search?q=HyperText%20Markup%20Language");
+    expect(googleSearchUrl("東京")).toBe("https://www.google.com/search?q=%E6%9D%B1%E4%BA%AC&noiga=1");
+    expect(googleSearchUrl("HyperText Markup Language")).toBe("https://www.google.com/search?q=HyperText%20Markup%20Language&noiga=1");
   });
 
   it("改行と連続する空白は 1 つに畳み、前後の空白は落とす", () => {
-    expect(googleSearchUrl("  ラファエロ\n（ラファエッロ）  ")).toBe(`https://www.google.com/search?q=${encodeURIComponent("ラファエロ （ラファエッロ）")}`);
+    expect(googleSearchUrl("  ラファエロ\n（ラファエッロ）  ")).toBe(`https://www.google.com/search?q=${encodeURIComponent("ラファエロ （ラファエッロ）")}&noiga=1`);
   });
 });

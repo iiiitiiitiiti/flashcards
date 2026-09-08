@@ -44,3 +44,12 @@
 - カードの外にあるので、`stopPropagation` は不要になった（押しても裏返らない・引きずりが評価にならない、はテストで維持）
 - `a` 要素なので button の既定スタイルが当たらない。`.card-action-link` で枠・背景・押下表現を button に揃え、iOS 向けの `data-pressed` の対象にも加えた
 - 検証: `tests/study-view.test.tsx` を差し替え（答えを出すまでは出ない・右側の列の先頭にあり次が編集・押しても裏返らない・早押しでも出る）。全 308 件通過。preview + headless Chromium（390px）で、36px の丸ボタン・4色ロゴ・新しいタブで検索 URL が開く・横スクロールなしを確認
+
+### 2026-09-08 追記: iOS で Google アプリに横取りされないよう `noiga=1` を付ける
+
+- 対象: `src/text.ts`（`googleSearchUrl`）
+- iPhone で押すと既定のブラウザではなく Google アプリが開いた（ユーザー報告）。google.com は `/search` を Universal Links に登録しているため
+- Apple の CDN 経由で取得した google.com の apple-app-site-association に、`noiga=1`（どのパスでも）と `/search?iga=0` を除外する規則が明記されている。公開されている opt-out なので、これを検索 URL に付ける
+- 却下: `window.open` で JS から開く — Universal Links の発火条件が iOS の版で揺れ、確実ではない
+- 却下: google.co.jp など別ドメイン — AASA は同じ内容で、やはり `/search` が登録されている
+- 兆候: Google 側が AASA から `noiga` を消したら再発する。そのときは URL の形を変える
