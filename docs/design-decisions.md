@@ -487,6 +487,7 @@ iOS はボタンの文字も選択対象にするため、早押しで押し込�
 - `jest-dom` は入れていない。`toBeDisabled()` の代わりに `.disabled` を見る
 - **`localStorage.clear()` は呼べない**。Node 25 が持つ native の localStorage が jsdom のものを覆っていて
   `clear()` が生えていない。設定は `storage.ts` が例外を握って既定値へ倒れるので、そのまま任せる
+  - **2026-09-08 解消**: `vite.config.ts` の `test.execArgv` に `--no-experimental-webstorage` を入れ、worker の Node から native の localStorage を外した。以後テストから `localStorage` を直接使ってよい
 - 進捗の fixture は**手書きの DTO ではなく `rate()` を重ねて作る**。DTO の形が変わっても追随する
 
 **テストに歯があることを変異で確認した**。`withoutLastAppearance` の呼び出しを消すと「再出題も取り除く」が、

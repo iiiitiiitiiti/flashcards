@@ -81,6 +81,16 @@ describe("mergeDecks", () => {
     expect(theirs[0].cards).toHaveLength(2);
   });
 
+  it("同じデッキ内の編集は位置を保つ（末尾へ動かさない）", () => {
+    const base3 = [deck("quiz-a", [card("001", "問1"), card("002", "問2"), card("003", "問3")])];
+    const ours3 = [deck("quiz-a", [card("001", "問1"), card("002", "問2 改"), card("003", "問3")])];
+    const merged = mergeDecks(structuredClone(base3), collectAppEdits(base3, ours3, SCOPE));
+    expect(merged.applied).toHaveLength(1);
+    const a = merged.decks.find((d: Deck) => d.id === "quiz-a");
+    expect(a.cards.map((c: Card) => c.id)).toEqual(["001", "002", "003"]);
+    expect(a.cards[1].front).toBe("問2 改");
+  });
+
   it("xlsx がすでに同じ内容なら何もしない（noop）", () => {
     const theirs = structuredClone(ours);
     const merged = mergeDecks(theirs, edits);

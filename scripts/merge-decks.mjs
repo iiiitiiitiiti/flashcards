@@ -142,7 +142,8 @@ export function mergeDecks(theirsDecks, edits, { onConflict = "stop", excludeDec
       conflicts.push({ ...edit, theirsDeck, theirs: theirsCard });
       if (onConflict !== "app") continue;
     }
-    if (theirsDeck !== undefined) removeFrom(theirsDeck, edit.cardId);
+    // 同じデッキ内なら putInto がその場で置き換える。先に消すと末尾へ移り、新規カードの出題順（デッキ順）が変わる
+    if (theirsDeck !== undefined && theirsDeck !== edit.toDeck) removeFrom(theirsDeck, edit.cardId);
     if (!putInto(edit.toDeck, edit.ours)) {
       unmergeable.push({ ...edit, reason: `移動先デッキ「${edit.toDeck}」が生成結果に無い` });
       continue;
