@@ -132,6 +132,34 @@ describe("答えの Google 検索", () => {
     expect(container.querySelector(".flip-inner")?.classList.contains("flipped")).toBe(true);
   });
 
+  it("iPhone のホーム画面版で設定がブラウザ指定なら、そのアプリのスキームへ渡す（新しいタブ指定なし）", () => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    localStorage.setItem("flashcards:search-browser", "vivaldi");
+    try {
+      const { container } = renderStudy();
+      reveal(container);
+      const link = searchLink(container)!;
+      expect(link.getAttribute("href")).toBe(`vivaldi://www.google.com/search?q=${encodeURIComponent("東京")}&noiga=1`);
+      expect(link.hasAttribute("target")).toBe(false);
+    } finally {
+      delete (navigator as { standalone?: boolean }).standalone;
+      localStorage.removeItem("flashcards:search-browser");
+    }
+  });
+
+  it("ホーム画面版でも設定がアプリ内なら https のまま新しいタブで開く", () => {
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    try {
+      const { container } = renderStudy();
+      reveal(container);
+      const link = searchLink(container)!;
+      expect(link.getAttribute("href")).toMatch(/^https:\/\//);
+      expect(link.getAttribute("target")).toBe("_blank");
+    } finally {
+      delete (navigator as { standalone?: boolean }).standalone;
+    }
+  });
+
   it("早押しでも答えを出すと出る", () => {
     const { container } = renderStudy({ mode: "buzzer" });
     fireEvent.click(screen.getByLabelText("押す"));

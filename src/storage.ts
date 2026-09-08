@@ -411,3 +411,34 @@ export function addPendingDeckDeletion(deckId: string): void {
 export function removePendingDeckDeletion(deckId: string): void {
   savePendingDeckDeletions(loadPendingDeckDeletions().filter((id) => id !== deckId));
 }
+
+const SEARCH_BROWSER_KEY = "flashcards:search-browser";
+
+/**
+ * 答えの Google 検索を開くブラウザ。iPhone のホーム画面から起動した PWA では外部リンクがアプリ内のブラウザで開くので、
+ * 既定のブラウザのアプリへ渡したいときに選ぶ（アプリから既定ブラウザは検出できない）
+ */
+export const SEARCH_BROWSERS = [
+  { id: "inapp", label: "アプリ内" },
+  { id: "safari", label: "Safari" },
+  { id: "vivaldi", label: "Vivaldi" },
+  { id: "chrome", label: "Chrome" },
+] as const;
+export type SearchBrowser = (typeof SEARCH_BROWSERS)[number]["id"];
+
+export function loadSearchBrowser(): SearchBrowser {
+  try {
+    const value = localStorage.getItem(SEARCH_BROWSER_KEY);
+    return SEARCH_BROWSERS.some((browser) => browser.id === value) ? (value as SearchBrowser) : "inapp";
+  } catch {
+    return "inapp";
+  }
+}
+
+export function saveSearchBrowser(value: SearchBrowser): void {
+  try {
+    localStorage.setItem(SEARCH_BROWSER_KEY, value);
+  } catch {
+    // 保存できなくてもアプリ内で開く
+  }
+}

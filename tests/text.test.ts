@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { googleSearchUrl, splitGraphemes } from "../src/text";
+import { browserUrl, googleSearchUrl, isIosStandalone, splitGraphemes } from "../src/text";
 
 describe("splitGraphemes", () => {
   it("日本語と英数字を1文字ずつに切る", () => {
@@ -33,5 +33,25 @@ describe("googleSearchUrl", () => {
 
   it("改行と連続する空白は 1 つに畳み、前後の空白は落とす", () => {
     expect(googleSearchUrl("  ラファエロ\n（ラファエッロ）  ")).toBe(`https://www.google.com/search?q=${encodeURIComponent("ラファエロ （ラファエッロ）")}&noiga=1`);
+  });
+});
+
+describe("ブラウザのアプリで開く", () => {
+  it("選んだブラウザのスキームに差し替える。アプリ内はそのまま", () => {
+    const url = "https://www.google.com/search?q=a&noiga=1";
+    expect(browserUrl(url, "safari")).toBe("x-safari-https://www.google.com/search?q=a&noiga=1");
+    expect(browserUrl(url, "vivaldi")).toBe("vivaldi://www.google.com/search?q=a&noiga=1");
+    expect(browserUrl(url, "chrome")).toBe("googlechromes://www.google.com/search?q=a&noiga=1");
+    expect(browserUrl(url, "inapp")).toBe(url);
+  });
+
+  it("navigator.standalone が true のときだけホーム画面版とみなす", () => {
+    expect(isIosStandalone()).toBe(false);
+    Object.defineProperty(navigator, "standalone", { value: true, configurable: true });
+    try {
+      expect(isIosStandalone()).toBe(true);
+    } finally {
+      delete (navigator as { standalone?: boolean }).standalone;
+    }
   });
 });

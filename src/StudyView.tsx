@@ -6,9 +6,9 @@ import { moveCardBetweenDecks, writeDeck } from "./github";
 import { moveCardLocalData, saveCardNote, saveReview, setCardHidden, undoReview } from "./db";
 import { describeStorageError } from "./quota";
 import { buildStudyItems, countIntroducedToday, dayKey, formatInterval, previewIntervals, progressKey, rate, ratingFromElapsed, retentionPercent, shuffled, type StudyItem } from "./srs";
-import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds, loadToken } from "./storage";
+import { loadBuzzerSpeed, loadNewCardsPerDay, loadRatingThresholds, loadSearchBrowser, loadToken, type SearchBrowser } from "./storage";
 import { StudyResult, type SessionEntry } from "./StudyResult";
-import { googleSearchUrl, splitGraphemes } from "./text";
+import { browserUrl, googleSearchUrl, isIosStandalone, splitGraphemes } from "./text";
 import { useVisibleViewport } from "./viewport";
 import type { ProgressRecord, ReviewRating, StudyFocus, StudyMode, StudyOrder } from "./types";
 
@@ -118,14 +118,18 @@ function GoogleIcon() {
 
 /**
  * 答えを Google で調べるリンク。カード上のアイコン列（編集の左）に置き、答えを出すまでは隣のボタンと同じく非活性にする
- * （`a` は disabled を持たないので、href を外して aria-disabled で表す）。新しいタブで開くので、戻れば学習は続いている
+ * （`a` は disabled を持たないので、href を外して aria-disabled で表す）。
+ * ブラウザでは新しいタブ。iPhone のホーム画面版では設定で選んだブラウザのアプリへ渡す（アプリ内で開くのを避けるため）。
+ * 戻れば学習は続いている
  */
-function SearchAction({ query, disabled }: { query: string; disabled: boolean }) {
+function SearchAction({ query, disabled, browser }: { query: string; disabled: boolean; browser: SearchBrowser }) {
+  const external = isIosStandalone() && browser !== "inapp";
+  const url = googleSearchUrl(query);
   return (
     <a
       className="card-action card-action-link"
-      href={disabled ? undefined : googleSearchUrl(query)}
-      target="_blank"
+      href={disabled ? undefined : external ? browserUrl(url, browser) : url}
+      target={external ? undefined : "_blank"}
       rel="noopener noreferrer"
       aria-label="Google で答えを検索"
       aria-disabled={disabled || undefined}
@@ -226,6 +230,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
   // 設定はセッション開始時の値で固定する（学習中に変わらない）
   const thresholds = useRef(loadRatingThresholds()).current;
   const buzzerSpeed = useRef(loadBuzzerSpeed()).current;
+  const searchBrowser = useRef(loadSearchBrowser()).current;
 
   useEffect(() => {
     // 学習中はページ全体のスクロール（iOS のバウンス含む）を止める。
@@ -811,7 +816,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
         <UndoIcon />
       </button>
       <span className="card-actions-right">
-      <SearchAction query={current.card.back} disabled={!revealed} />
+      <SearchAction query={current.card.back} disabled={!revealed} browser={searchBrowser} />
       {canEditCards && (
         <button
           type="button"

@@ -21,6 +21,7 @@ import {
   loadNewCardsPerDay,
   loadNewCardsScope,
   loadRatingThresholds,
+  loadSearchBrowser,
   loadToken,
   saveBuzzerSpeed,
   saveLastBackupAt,
@@ -28,8 +29,11 @@ import {
   saveNewCardsPerDay,
   saveNewCardsScope,
   saveRatingThresholds,
+  saveSearchBrowser,
   saveToken,
+  SEARCH_BROWSERS,
   tokenPersistence,
+  type SearchBrowser,
 } from "./storage";
 import { NEW_CARDS_PER_DAY_OPTIONS, normalizeRatingThresholds } from "./srs";
 import type { DeckSnapshot, NewCardsScope, RatingThresholds } from "./types";
@@ -64,6 +68,7 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
   const [orphanMessage, setOrphanMessage] = useState<string | null>(null);
   const [crossfade, setCrossfade] = useState(loadMotionPreference() === "crossfade");
   const [buzzerSpeed, setBuzzerSpeed] = useState(loadBuzzerSpeed);
+  const [searchBrowser, setSearchBrowser] = useState<SearchBrowser>(loadSearchBrowser);
   const [newCardsPerDay, setNewCardsPerDay] = useState(loadNewCardsPerDay);
   const [newCardsScope, setNewCardsScope] = useState<NewCardsScope>(loadNewCardsScope);
   const [thresholds, setThresholds] = useState<RatingThresholds>(loadRatingThresholds);
@@ -74,6 +79,11 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
     const preference = next ? "crossfade" : "full";
     saveMotionPreference(preference);
     document.documentElement.dataset.motion = preference;
+  }
+
+  function handleSearchBrowserChange(value: SearchBrowser) {
+    setSearchBrowser(value);
+    saveSearchBrowser(value);
   }
 
   function handleNewCardsPerDayChange(value: number) {
@@ -428,6 +438,26 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
         )}
         {token.trim() === "" && <p className="muted">トークンを登録すると使えます。</p>}
         {cloudMessage && <p className="notice">{cloudMessage}</p>}
+      </div>
+
+      <h2>答えの検索</h2>
+      <div className="settings-group">
+        <span className="sheet-label">Google 検索を開くブラウザ</span>
+        <div className="segmented">
+          {SEARCH_BROWSERS.map((browser) => (
+            <button
+              key={browser.id}
+              type="button"
+              aria-pressed={searchBrowser === browser.id}
+              onClick={() => handleSearchBrowserChange(browser.id)}
+            >
+              {browser.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted">
+          iPhone のホーム画面から起動したときに効きます。ホーム画面版では検索がアプリ内のブラウザで開くので、いつものブラウザで見たいときに選んでください。ブラウザで使っているときは新しいタブで開きます。
+        </p>
       </div>
 
       <h2>アニメーション</h2>
