@@ -104,21 +104,32 @@ const BUZZER_LEAD_IN_MS = 450;
 /** キューの1枚。どのデッキのカードかを持つ（デッキをまたぐ学習で保存先を取り違えない） */
 type QueueItem = StudyItem;
 
+/** Google のロゴ（公式の「Sign in with Google」ボタンの SVG そのまま。色は固定） */
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
+  );
+}
+
 /**
- * 答えを Google で調べるリンク。カード本体はタップで裏返り、横に引くと評価になるので、
- * リンク上の操作はカードへ伝えない（押した瞬間に裏返って開かない・引きずりが評価にならない）
+ * 答えを Google で調べるリンク。カード上のアイコン列（編集の左）に置き、答えを出している間だけ出す。
+ * 新しいタブで開くので、戻れば学習は続いている
  */
-function SearchLink({ query }: { query: string }) {
+function SearchAction({ query }: { query: string }) {
   return (
     <a
-      className="study-search"
+      className="card-action card-action-link"
       href={googleSearchUrl(query)}
       target="_blank"
       rel="noopener noreferrer"
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
+      aria-label="Google で答えを検索"
     >
-      Google で答えを検索
+      <GoogleIcon />
     </a>
   );
 }
@@ -778,7 +789,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
 
   if (!current) return null;
 
-  /** カードへの操作（メモ・非表示）。ヘッダーではなくカードの上に置く */
+  /** カードへの操作（検索・編集・メモ・非表示）。ヘッダーではなくカードの上に置く */
   /*
    * 早押しで答えを出す前は、メモと非表示を止める。読んでいる最中や押して止めている最中に
    * ダイアログが割り込むと、そのまま答えが見えてしまう。
@@ -798,6 +809,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
         <UndoIcon />
       </button>
       <span className="card-actions-right">
+      {revealed && <SearchAction query={current.card.back} />}
       {canEditCards && (
         <button
           type="button"
@@ -935,7 +947,6 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
                     <div className="study-back">{current.card.back}</div>
                     {current.card.note && <div className="study-note muted">{current.card.note}</div>}
                     {notes.has(keyOf(current)) && <div className="study-memo">{notes.get(keyOf(current))}</div>}
-                    <SearchLink query={current.card.back} />
                   </>
                 ) : (
                   <div className="study-front buzzer-text">
@@ -1043,7 +1054,6 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
                 <hr />
                 <div className="study-back">{current.card.back}</div>
                 {current.card.note && <div className="study-note muted">{current.card.note}</div>}
-                <SearchLink query={current.card.back} />
                 {notes.has(keyOf(current)) && <div className="study-memo">{notes.get(keyOf(current))}</div>}
               </div>
             </div>

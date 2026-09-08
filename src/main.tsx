@@ -24,8 +24,8 @@ function releasePressedElement() {
 document.addEventListener(
   "pointerdown",
   (event) => {
-    // ハイライトを全要素で消しているので、押せるものはすべて拾う（非表示一覧の summary を含む）
-    const target = event.target instanceof Element ? event.target.closest("button, summary") : null;
+    // ハイライトを全要素で消しているので、押せるものはすべて拾う（非表示一覧の summary、カード上の Google 検索リンクを含む）
+    const target = event.target instanceof Element ? event.target.closest("button, summary, .card-action-link") : null;
     releasePressedElement();
     // 無効なボタンは沈ませない（CSS の :not(:disabled) と揃える）
     if (!target || (target instanceof HTMLButtonElement && target.disabled)) return;

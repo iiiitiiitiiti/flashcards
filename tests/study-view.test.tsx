@@ -110,16 +110,22 @@ describe("通常学習の1枚ぶん", () => {
 });
 
 describe("答えの Google 検索", () => {
-  it("答えを出すと検索リンクが出て、押してもカードは裏返らない", () => {
+  const searchLink = (container: HTMLElement) => container.querySelector("a.card-action-link") as HTMLAnchorElement | null;
+
+  it("答えを出すまでは出ず、出すとアイコン列の編集の左に現れる", () => {
     const { container } = renderStudy();
-    // 通常モードは裏面をあらかじめ描いてめくるので、リンク自体は最初から DOM にある
+    expect(searchLink(container)).toBeNull();
     reveal(container);
-    const link = container.querySelector("a.study-search") as HTMLAnchorElement;
+    const link = searchLink(container)!;
     expect(link.getAttribute("href")).toBe(`https://www.google.com/search?q=${encodeURIComponent("東京")}`);
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noopener");
+    expect(link.getAttribute("aria-label")).toBe("Google で答えを検索");
+    const right = container.querySelector(".card-actions-right")!;
+    expect(right.firstElementChild).toBe(link);
+    expect(link.nextElementSibling?.getAttribute("aria-label")).toBe("このカードを編集する");
+    // リンクはカードの外にあるので、押してもカードは裏返らず評価ボタンが残る
     fireEvent.click(link);
-    // カード本体のクリックなら裏返って評価ボタンが消えるが、リンクのクリックは伝えない
     expect(screen.queryByText("わかった")).not.toBeNull();
     expect(container.querySelector(".flip-inner")?.classList.contains("flipped")).toBe(true);
   });
@@ -127,8 +133,9 @@ describe("答えの Google 検索", () => {
   it("早押しでも答えを出すと出る", () => {
     const { container } = renderStudy({ mode: "buzzer" });
     fireEvent.click(screen.getByLabelText("押す"));
+    expect(searchLink(container)).toBeNull();
     fireEvent.click(screen.getByText("答えを表示"));
-    expect(container.querySelector("a.study-search")?.getAttribute("href")).toContain(encodeURIComponent("東京"));
+    expect(searchLink(container)?.getAttribute("href")).toContain(encodeURIComponent("東京"));
   });
 });
 
