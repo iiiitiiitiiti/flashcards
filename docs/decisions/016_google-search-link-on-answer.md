@@ -53,3 +53,15 @@
 - 却下: `window.open` で JS から開く — Universal Links の発火条件が iOS の版で揺れ、確実ではない
 - 却下: google.co.jp など別ドメイン — AASA は同じ内容で、やはり `/search` が登録されている
 - 兆候: Google 側が AASA から `noiga` を消したら再発する。そのときは URL の形を変える
+
+### 2026-09-08 追記: ホーム画面版では、設定で選んだブラウザのアプリへ渡す
+
+- 対象: `src/storage.ts`（`SEARCH_BROWSERS`・`loadSearchBrowser`）、`src/text.ts`（`isIosStandalone`・`browserUrl`）、`src/StudyView.tsx`、`src/SettingsView.tsx`（「答えの検索」）
+- iPhone のホーム画面から起動した PWA では、外部リンクが iOS のアプリ内ブラウザで開く（ユーザー報告: 「アプリ内のブラウザで開いている。既定のブラウザへ遷移したい」。既定は Vivaldi）
+- Web アプリから端末の既定ブラウザは検出できないし、既定ブラウザへ「渡す」API も無い。各ブラウザが登録している URL スキームに差し替えるしかないので、設定「Google 検索を開くブラウザ」（アプリ内／Safari／Vivaldi／Chrome。既定はアプリ内）を置き、`navigator.standalone` が真のときだけそのスキームで開く
+- スキームの根拠: Safari は `x-safari-https://`（非公開だが広く使われている）、Chrome は `googlechromes://`（公開仕様）、Vivaldi は `vivaldi://`（公式資料は見つからず。Telegram iOS のソース `OpenInOptions.swift` が「Vivaldi で開く」にこの形を使っているのを根拠にした）
+- 却下: Safari 固定の `x-safari-https://` — ユーザーの既定が Vivaldi なので Safari が開いてしまう
+- 却下: `window.open` や JS 経由の遷移 — 標準では standalone のアプリ内ブラウザから出られない
+- 却下: UA からブラウザを推定 — standalone の UA は Safari 相当で、既定ブラウザの情報は無い
+- 兆候: Vivaldi 側がスキームを変えると開かなくなる（iOS は未登録スキームを無視する）。そのときは Safari か Chrome に切り替えて使える
+- 検証: `tests/text.test.ts`（スキーム差し替え 4 種・standalone 判定）、`tests/study-view.test.tsx`（standalone＋Vivaldi 設定で `vivaldi://` の href と target なし／standalone でもアプリ内なら https＋新しいタブ）。全 312 件通過。preview＋headless Chromium で `navigator.standalone` を真にして、設定で Vivaldi を選ぶと href が `vivaldi://www.google.com/search?...&noiga=1` になることを確認。実機（Vivaldi が開くか）は未検証
