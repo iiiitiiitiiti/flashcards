@@ -272,65 +272,73 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
 
       <h2>学習</h2>
       <div className="settings-group">
-        <span className="sheet-label">1日に出す新規カード</span>
-        <div className="segmented">
-          {NEW_CARDS_PER_DAY_OPTIONS.map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={newCardsPerDay === value}
-              onClick={() => handleNewCardsPerDayChange(value)}
-            >
-              {value === 0 ? "無制限" : value}
+        <div className="settings-field">
+          <span className="sheet-label">1日に出す新規カード</span>
+          <div className="segmented">
+            {NEW_CARDS_PER_DAY_OPTIONS.map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={newCardsPerDay === value}
+                onClick={() => handleNewCardsPerDayChange(value)}
+              >
+                {value === 0 ? "無制限" : value}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="settings-field">
+          <span className="sheet-label">この枚数を数える単位</span>
+          <div className="segmented">
+            <button type="button" aria-pressed={newCardsScope === "deck"} onClick={() => handleNewCardsScopeChange("deck")}>
+              デッキごと
             </button>
-          ))}
-        </div>
-        <span className="sheet-label">この枚数を数える単位</span>
-        <div className="segmented">
-          <button type="button" aria-pressed={newCardsScope === "deck"} onClick={() => handleNewCardsScopeChange("deck")}>
-            デッキごと
-          </button>
-          <button type="button" aria-pressed={newCardsScope === "all"} onClick={() => handleNewCardsScopeChange("all")}>
-            全デッキ合計
-          </button>
-        </div>
-        <p className="muted">
-          {newCardsPerDay === 0
-            ? "「無制限」の間は、この単位の設定は効きません。"
-            : newCardsScope === "deck"
-              ? `デッキごとに1日 ${newCardsPerDay} 枚${deckCount !== null ? `（${deckCount} デッキで最大 ${newCardsPerDay * deckCount} 枚）` : ""}。`
-              : `全デッキ合わせて1日 ${newCardsPerDay} 枚。`}
-        </p>
-        <span className="sheet-label">早押しの表示速度</span>
-        <div className="segmented">
-          {BUZZER_SPEEDS.map((speed) => (
-            <button key={speed.ms} type="button" aria-pressed={buzzerSpeed === speed.ms} onClick={() => handleBuzzerSpeedChange(speed.ms)}>
-              {speed.label}
+            <button type="button" aria-pressed={newCardsScope === "all"} onClick={() => handleNewCardsScopeChange("all")}>
+              全デッキ合計
             </button>
-          ))}
+          </div>
+          <p className="muted">
+            {newCardsPerDay === 0
+              ? "「無制限」の間は、この単位の設定は効きません。"
+              : newCardsScope === "deck"
+                ? `デッキごとに1日 ${newCardsPerDay} 枚${deckCount !== null ? `（${deckCount} デッキで最大 ${newCardsPerDay * deckCount} 枚）` : ""}。`
+                : `全デッキ合わせて1日 ${newCardsPerDay} 枚。`}
+          </p>
         </div>
-        <span className="sheet-label">右スワイプの評価に使う秒数</span>
-        <div className="threshold-row">
-          {([
-            { key: "easy", label: "簡単" },
-            { key: "good", label: "普通" },
-            { key: "hard", label: "難しい" },
-          ] as const).map(({ key, label }) => (
-            <label key={key} className="threshold-field">
-              {label}
-              <input
-                type="number"
-                min={1}
-                max={600}
-                step={1}
-                value={thresholds[key]}
-                onChange={(event) => handleThresholdChange(key, event.target.value)}
-                onBlur={handleThresholdBlur}
-              />
-            </label>
-          ))}
+        <div className="settings-field">
+          <span className="sheet-label">早押しの表示速度</span>
+          <div className="segmented">
+            {BUZZER_SPEEDS.map((speed) => (
+              <button key={speed.ms} type="button" aria-pressed={buzzerSpeed === speed.ms} onClick={() => handleBuzzerSpeedChange(speed.ms)}>
+                {speed.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <p className="muted">問題が出てからスワイプするまでの秒数で決まります。「難しい」を超えると「もう一度」です。</p>
+        <div className="settings-field">
+          <span className="sheet-label">右スワイプの評価に使う秒数</span>
+          <div className="threshold-row">
+            {([
+              { key: "easy", label: "簡単" },
+              { key: "good", label: "普通" },
+              { key: "hard", label: "難しい" },
+            ] as const).map(({ key, label }) => (
+              <label key={key} className="threshold-field">
+                {label}
+                <input
+                  type="number"
+                  min={1}
+                  max={600}
+                  step={1}
+                  value={thresholds[key]}
+                  onChange={(event) => handleThresholdChange(key, event.target.value)}
+                  onBlur={handleThresholdBlur}
+                />
+              </label>
+            ))}
+          </div>
+          <p className="muted">問題が出てからスワイプするまでの秒数で決まります。「難しい」を超えると「もう一度」です。</p>
+        </div>
         <details className="settings-help">
           <summary>説明を見る</summary>
           <p>新規は数日かけて復習が返ってくるので、毎日の復習が増えすぎるときは単位を「全デッキ合計」にしてください。全デッキ合計では、先に開いたデッキから枠を使います。</p>
@@ -340,20 +348,22 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
 
       <h2>表示と動作</h2>
       <div className="settings-group">
-        <span className="sheet-label">Google 検索を開くブラウザ</span>
-        <div className="segmented">
-          {SEARCH_BROWSERS.map((browser) => (
-            <button
-              key={browser.id}
-              type="button"
-              aria-pressed={searchBrowser === browser.id}
-              onClick={() => handleSearchBrowserChange(browser.id)}
-            >
-              {browser.label}
-            </button>
-          ))}
+        <div className="settings-field">
+          <span className="sheet-label">Google 検索を開くブラウザ</span>
+          <div className="segmented">
+            {SEARCH_BROWSERS.map((browser) => (
+              <button
+                key={browser.id}
+                type="button"
+                aria-pressed={searchBrowser === browser.id}
+                onClick={() => handleSearchBrowserChange(browser.id)}
+              >
+                {browser.label}
+              </button>
+            ))}
+          </div>
+          <p className="muted">iPhone のホーム画面から起動したときに効きます。</p>
         </div>
-        <p className="muted">iPhone のホーム画面から起動したときに効きます。</p>
         <label className="checkbox-label">
           <input type="checkbox" checked={crossfade} onChange={(event) => handleMotionChange(event.target.checked)} />
           動きを減らす（カードの反転・移動をクロスフェードにする）
@@ -367,72 +377,76 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
 
       <h2>バックアップ</h2>
       <div className="settings-group">
-        <p className="muted">
-          この端末に書き出し: {lastBackupAt !== null ? formatTimestamp(lastBackupAt) : "未実施"}
-          {usage !== null && (
+        <div className="settings-field">
+          <p className="muted">
+            この端末に書き出し: {lastBackupAt !== null ? formatTimestamp(lastBackupAt) : "未実施"}
+            {usage !== null && (
+              <>
+                ・保存容量 {formatBytes(usage.usedBytes)}
+                {usage.quotaBytes > 0 && ` / ${formatBytes(usage.quotaBytes)}`}
+                ・永続化 {usage.persisted ? "有効" : "無効"}
+              </>
+            )}
+          </p>
+          <div className="button-row">
+            <button type="button" onClick={() => void handleExport()}>JSONを書き出す</button>
+            <button type="button" onClick={() => fileInputRef.current?.click()}>JSONを取り込む</button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,.gz,application/json,application/gzip"
+            className="hidden-input"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void handleImportFile(file);
+              event.target.value = "";
+            }}
+          />
+          {backupMessage && <p className="notice">{backupMessage}</p>}
+        </div>
+        <div className="settings-field">
+          <p className="muted">GitHub へ保存: {lastCloudBackupAt !== null ? formatTimestamp(lastCloudBackupAt) : "未実施"}</p>
+          {cloudError && (
+            <p className="notice warning">
+              自動保存に失敗（{formatTimestamp(cloudError.at)}）: {cloudError.message}
+            </p>
+          )}
+          <label className="checkbox-label">
+            <input type="checkbox" checked={autoCloud} onChange={(event) => handleAutoCloudChange(event.target.checked)} />
+            学習を終えたとき自動で保存する（1日1回）
+          </label>
+          <div className="button-row">
+            <button type="button" onClick={() => void handleCloudUpload()} disabled={cloudBusy || token.trim() === ""}>
+              {cloudBusy ? "処理中…" : "今すぐ GitHub へ保存"}
+            </button>
+            <button type="button" onClick={() => void handleLoadCloudVersions()} disabled={cloudBusy || token.trim() === ""}>
+              復元する版を選ぶ
+            </button>
+          </div>
+          {cloudVersions !== null && cloudVersions.length > 0 && (
             <>
-              ・保存容量 {formatBytes(usage.usedBytes)}
-              {usage.quotaBytes > 0 && ` / ${formatBytes(usage.quotaBytes)}`}
-              ・永続化 {usage.persisted ? "有効" : "無効"}
+              <select value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} aria-label="復元する版">
+                <option value="main">最新</option>
+                {cloudVersions.map((commit) => (
+                  <option key={commit.sha} value={commit.sha}>
+                    {commit.date ? formatTimestamp(Date.parse(commit.date)) : commit.sha.slice(0, 7)} — {commit.message.split("\n")[0]}
+                  </option>
+                ))}
+              </select>
+              <div className="button-row">
+                <button type="button" onClick={() => void handleCloudRestore()} disabled={cloudBusy}>
+                  {cloudBusy ? "処理中…" : "この版を統合する"}
+                </button>
+              </div>
+              <p className="muted">
+                復元は上書きではなく統合です。端末側の方が新しい進捗はそのまま残り、端末で消した進捗が戻ることがあります。非表示の解除は戻りません。
+              </p>
             </>
           )}
-        </p>
-        <div className="button-row">
-          <button type="button" onClick={() => void handleExport()}>JSONを書き出す</button>
-          <button type="button" onClick={() => fileInputRef.current?.click()}>JSONを取り込む</button>
+          {token.trim() === "" && <p className="muted">GitHub への保存はトークンを登録すると使えます。</p>}
+          {cloudMessage && <p className="notice">{cloudMessage}</p>}
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json,.gz,application/json,application/gzip"
-          className="hidden-input"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) void handleImportFile(file);
-            event.target.value = "";
-          }}
-        />
-        {backupMessage && <p className="notice">{backupMessage}</p>}
-        <p className="muted">GitHub へ保存: {lastCloudBackupAt !== null ? formatTimestamp(lastCloudBackupAt) : "未実施"}</p>
-        {cloudError && (
-          <p className="notice warning">
-            自動保存に失敗（{formatTimestamp(cloudError.at)}）: {cloudError.message}
-          </p>
-        )}
-        <label className="checkbox-label">
-          <input type="checkbox" checked={autoCloud} onChange={(event) => handleAutoCloudChange(event.target.checked)} />
-          学習を終えたとき自動で保存する（1日1回）
-        </label>
-        <div className="button-row">
-          <button type="button" onClick={() => void handleCloudUpload()} disabled={cloudBusy || token.trim() === ""}>
-            {cloudBusy ? "処理中…" : "今すぐ GitHub へ保存"}
-          </button>
-          <button type="button" onClick={() => void handleLoadCloudVersions()} disabled={cloudBusy || token.trim() === ""}>
-            復元する版を選ぶ
-          </button>
-        </div>
-        {cloudVersions !== null && cloudVersions.length > 0 && (
-          <>
-            <select value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} aria-label="復元する版">
-              <option value="main">最新</option>
-              {cloudVersions.map((commit) => (
-                <option key={commit.sha} value={commit.sha}>
-                  {commit.date ? formatTimestamp(Date.parse(commit.date)) : commit.sha.slice(0, 7)} — {commit.message.split("\n")[0]}
-                </option>
-              ))}
-            </select>
-            <div className="button-row">
-              <button type="button" onClick={() => void handleCloudRestore()} disabled={cloudBusy}>
-                {cloudBusy ? "処理中…" : "この版を統合する"}
-              </button>
-            </div>
-            <p className="muted">
-              復元は上書きではなく統合です。端末側の方が新しい進捗はそのまま残り、端末で消した進捗が戻ることがあります。非表示の解除は戻りません。
-            </p>
-          </>
-        )}
-        {token.trim() === "" && <p className="muted">GitHub への保存はトークンを登録すると使えます。</p>}
-        {cloudMessage && <p className="notice">{cloudMessage}</p>}
         <details className="settings-help">
           <summary>説明を見る</summary>
           <p>進捗はこの端末にのみ保存されます。端末やブラウザのデータ削除に備えて、定期的に書き出してください。</p>
@@ -444,25 +458,27 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
 
       <h2>GitHub トークン</h2>
       <div className="settings-group">
-        <p className="muted">カードの編集と GitHub へのバックアップに使います。学習だけなら不要です。</p>
-        <input
-          type="password"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          placeholder="github_pat_..."
-          autoComplete="off"
-        />
-        <label className="checkbox-label">
-          <input type="checkbox" checked={persistToken} onChange={(event) => setPersistToken(event.target.checked)} />
-          この端末に保存する（オフはセッション限定）
-        </label>
-        <div className="button-row">
-          <button type="button" onClick={handleSaveToken}>保存</button>
-          <button type="button" onClick={() => void handleTestConnection()} disabled={testing || token.trim() === ""}>
-            {testing ? "確認中…" : "接続テスト"}
-          </button>
+        <div className="settings-field">
+          <p className="muted">カードの編集と GitHub へのバックアップに使います。学習だけなら不要です。</p>
+          <input
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="github_pat_..."
+            autoComplete="off"
+          />
+          <label className="checkbox-label">
+            <input type="checkbox" checked={persistToken} onChange={(event) => setPersistToken(event.target.checked)} />
+            この端末に保存する（オフはセッション限定）
+          </label>
+          <div className="button-row">
+            <button type="button" onClick={handleSaveToken}>保存</button>
+            <button type="button" onClick={() => void handleTestConnection()} disabled={testing || token.trim() === ""}>
+              {testing ? "確認中…" : "接続テスト"}
+            </button>
+          </div>
+          {tokenMessage && <p className="notice">{tokenMessage}</p>}
         </div>
-        {tokenMessage && <p className="notice">{tokenMessage}</p>}
         <details className="settings-help">
           <summary>説明を見る</summary>
           <p>fine-grained PAT で、このリポジトリと {OWNER}/{BACKUP_REPOSITORY} の Contents: Read and write を許可したものが必要です。</p>
@@ -471,11 +487,13 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
 
       <h2>メンテナンス</h2>
       <div className="settings-group">
-        <div className="button-row">
-          <button type="button" onClick={() => void handleDeleteOrphans()}>孤児進捗を削除</button>
+        <div className="settings-field">
+          <div className="button-row">
+            <button type="button" onClick={() => void handleDeleteOrphans()}>孤児進捗を削除</button>
+          </div>
+          <p className="muted">デッキから削除されたカードに残っている学習進捗を掃除します。</p>
+          {orphanMessage && <p className="notice">{orphanMessage}</p>}
         </div>
-        <p className="muted">デッキから削除されたカードに残っている学習進捗を掃除します。</p>
-        {orphanMessage && <p className="notice">{orphanMessage}</p>}
       </div>
     </section>
   );

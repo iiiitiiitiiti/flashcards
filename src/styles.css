@@ -1001,12 +1001,25 @@ body.study-lock {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  /* 項目と項目の間。項目の中（ラベル→操作→説明）は .settings-field の 8px で詰め、間隔に差をつける */
+  gap: 18px;
   box-shadow: var(--shadow-card);
 }
 
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 「説明を見る」は項目の続きなので、項目間ほど離さない */
+.settings-group > .settings-help {
+  margin-top: -8px;
+}
+
 /* 設定カードの中の段落は flex の gap だけで間隔を取る（p の既定マージンが上下に足されて背が伸びていた） */
-.settings-group > p {
+.settings-group > p,
+.settings-field > p {
   margin: 0;
 }
 
@@ -1345,6 +1358,13 @@ textarea {
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
   gap: 6px;
+}
+
+/* 5 分割（無制限）や 4 分割（アプリ内）でも 1 行に収める。button 既定の左右 14px だと 390px 幅で折り返す */
+.segmented button {
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: nowrap;
 }
 
 .segmented button[aria-pressed="true"] {
