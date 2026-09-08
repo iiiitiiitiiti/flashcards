@@ -39,7 +39,7 @@
 
 - 対象: `src/StudyView.tsx`（`SearchAction`・`GoogleIcon`）、`src/styles.css`（`.card-action-link`）、`src/main.tsx`（押下表現の対象に追加）
 - ユーザー指定で、右上の編集ボタンの左に並べる形へ変更。アイコンは Google 公式の「Sign in with Google」ボタンの SVG（4色ロゴ）をそのまま使う
-- 答えを出している間だけ描く（表向きでは意味を持たないため）。通常・早押しの両方
+- 表向きの間は隣のボタンと同じく非活性（薄い表示・href なし・`aria-disabled`）にし、答えを出すと押せるようにする。通常・早押しの両方。当初は答えを出している間だけ描いていたが、同日「隣のボタンたちと同じように非活性にしてほしい」と指示され変更
 - 答えの下の文字リンク（`.study-search`）は削除。同じ操作の入口を 2 つ置かない
 - カードの外にあるので、`stopPropagation` は不要になった（押しても裏返らない・引きずりが評価にならない、はテストで維持）
 - `a` 要素なので button の既定スタイルが当たらない。`.card-action-link` で枠・背景・押下表現を button に揃え、iOS 向けの `data-pressed` の対象にも加えた

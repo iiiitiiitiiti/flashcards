@@ -117,17 +117,19 @@ function GoogleIcon() {
 }
 
 /**
- * 答えを Google で調べるリンク。カード上のアイコン列（編集の左）に置き、答えを出している間だけ出す。
- * 新しいタブで開くので、戻れば学習は続いている
+ * 答えを Google で調べるリンク。カード上のアイコン列（編集の左）に置き、答えを出すまでは隣のボタンと同じく非活性にする
+ * （`a` は disabled を持たないので、href を外して aria-disabled で表す）。新しいタブで開くので、戻れば学習は続いている
  */
-function SearchAction({ query }: { query: string }) {
+function SearchAction({ query, disabled }: { query: string; disabled: boolean }) {
   return (
     <a
       className="card-action card-action-link"
-      href={googleSearchUrl(query)}
+      href={disabled ? undefined : googleSearchUrl(query)}
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Google で答えを検索"
+      aria-disabled={disabled || undefined}
+      tabIndex={disabled ? -1 : undefined}
     >
       <GoogleIcon />
     </a>
@@ -809,7 +811,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
         <UndoIcon />
       </button>
       <span className="card-actions-right">
-      {revealed && <SearchAction query={current.card.back} />}
+      <SearchAction query={current.card.back} disabled={!revealed} />
       {canEditCards && (
         <button
           type="button"

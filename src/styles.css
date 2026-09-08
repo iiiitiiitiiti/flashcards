@@ -741,6 +741,12 @@ body.study-lock {
   opacity: 0.72;
 }
 
+/* 答えを出すまでは button:disabled と同じ見た目で、押しても開かない */
+.card-action-link[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* メモがあるカードは塗りを変えて、書いてあることが分かるようにする */
 .card-action-on {
   border-color: var(--color-primary);

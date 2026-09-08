@@ -112,11 +112,13 @@ describe("通常学習の1枚ぶん", () => {
 describe("答えの Google 検索", () => {
   const searchLink = (container: HTMLElement) => container.querySelector("a.card-action-link") as HTMLAnchorElement | null;
 
-  it("答えを出すまでは出ず、出すとアイコン列の編集の左に現れる", () => {
+  it("答えを出すまでは非活性で、出すとアイコン列の編集の左で押せるようになる", () => {
     const { container } = renderStudy();
-    expect(searchLink(container)).toBeNull();
-    reveal(container);
     const link = searchLink(container)!;
+    expect(link.getAttribute("aria-disabled")).toBe("true");
+    expect(link.hasAttribute("href")).toBe(false);
+    reveal(container);
+    expect(link.getAttribute("aria-disabled")).toBeNull();
     expect(link.getAttribute("href")).toBe(`https://www.google.com/search?q=${encodeURIComponent("東京")}`);
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noopener");
@@ -133,7 +135,7 @@ describe("答えの Google 検索", () => {
   it("早押しでも答えを出すと出る", () => {
     const { container } = renderStudy({ mode: "buzzer" });
     fireEvent.click(screen.getByLabelText("押す"));
-    expect(searchLink(container)).toBeNull();
+    expect(searchLink(container)?.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(screen.getByText("答えを表示"));
     expect(searchLink(container)?.getAttribute("href")).toContain(encodeURIComponent("東京"));
   });
