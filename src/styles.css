@@ -667,19 +667,6 @@ body.study-lock {
 }
 
 /* 自分で書いたメモ。出典側の補足（.study-note）とは見た目を分ける */
-/* 答えの下の外部リンク。カード本体のタップと区別できるよう、小さめの文字と下線で「リンク」に見せる */
-.study-search {
-  display: inline-block;
-  margin-top: 14px;
-  padding: 4px 8px;
-  font-size: 13px;
-  color: var(--color-primary);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  min-height: 38px;
-  line-height: 30px;
-}
-
 .study-memo {
   margin-top: 12px;
   padding: 10px 12px;
@@ -710,10 +697,10 @@ body.study-lock {
   font-weight: 600;
 }
 
-/* カードへの操作（メモ・非表示）。ヘッダーではなくカードの上へ右寄せで置く */
+/* カードへの操作（検索・編集・メモ・非表示）。ヘッダーではなくカードの上へ右寄せで置く */
 .card-actions {
   display: flex;
-  /* 戻すボタンは左、メモ・非表示は右（役割が違うので離す） */
+  /* 戻すボタンは左、検索・編集・メモ・非表示は右（役割が違うので離す） */
   justify-content: space-between;
   gap: 8px;
   padding: 8px 16px 0;
@@ -734,6 +721,24 @@ body.study-lock {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* リンク（Google 検索）をボタンと同じ丸い見た目にする。button の既定スタイルは a には当たらない */
+.card-action-link {
+  box-sizing: border-box;
+  border: 1px solid var(--color-primary-soft);
+  background: var(--color-surface);
+  text-decoration: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+.card-action-link:active,
+.card-action-link[data-pressed] {
+  transform: scale(0.96);
+  opacity: 0.72;
 }
 
 /* メモがあるカードは塗りを変えて、書いてあることが分かるようにする */
