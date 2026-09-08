@@ -28,7 +28,7 @@ document.addEventListener(
     const target = event.target instanceof Element ? event.target.closest("button, summary, .card-action-link") : null;
     releasePressedElement();
     // 無効なボタンは沈ませない（CSS の :not(:disabled) と揃える）
-    if (!target || (target instanceof HTMLButtonElement && target.disabled)) return;
+    if (!target || (target instanceof HTMLButtonElement && target.disabled) || target.getAttribute("aria-disabled") === "true") return;
     pressedElement = target;
     target.setAttribute("data-pressed", "");
   },
