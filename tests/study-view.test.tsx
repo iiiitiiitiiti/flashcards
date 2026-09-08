@@ -119,7 +119,7 @@ describe("答えの Google 検索", () => {
     expect(link.hasAttribute("href")).toBe(false);
     reveal(container);
     expect(link.getAttribute("aria-disabled")).toBeNull();
-    expect(link.getAttribute("href")).toBe(`https://www.google.com/search?q=${encodeURIComponent("東京")}`);
+    expect(link.getAttribute("href")).toBe(`https://www.google.com/search?q=${encodeURIComponent("東京")}&noiga=1`);
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noopener");
     expect(link.getAttribute("aria-label")).toBe("Google で答えを検索");
