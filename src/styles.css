@@ -1005,6 +1005,28 @@ body.study-lock {
   box-shadow: var(--shadow-card);
 }
 
+/* 設定カードの中の段落は flex の gap だけで間隔を取る（p の既定マージンが上下に足されて背が伸びていた） */
+.settings-group > p {
+  margin: 0;
+}
+
+/* 長い説明は「説明を見る」に畳む。summary はタップ領域 38px を確保し、開いた本文は薄い文字 */
+.settings-help summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-primary);
+  /* display を変えると開閉の三角が消えるので、タップ領域は padding で 38px にする */
+  padding: 8px 0;
+  line-height: 22px;
+}
+
+.settings-help p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-muted);
+}
+
 .settings-group input[type="password"],
 .settings-group input[type="text"],
 .settings-group input[type="number"],

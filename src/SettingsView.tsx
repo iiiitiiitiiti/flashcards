@@ -270,31 +270,6 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
         <h1>各種設定</h1>
       </header>
 
-      <h2>GitHub トークン（編集用）</h2>
-      <p className="muted">
-        カードの追加・編集を GitHub に保存するには fine-grained PAT（このリポジトリの Contents: Read and write）が必要です。学習だけなら不要です。
-      </p>
-      <div className="settings-group">
-        <input
-          type="password"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          placeholder="github_pat_..."
-          autoComplete="off"
-        />
-        <label className="checkbox-label">
-          <input type="checkbox" checked={persistToken} onChange={(event) => setPersistToken(event.target.checked)} />
-          この端末に保存する（オフはセッション限定）
-        </label>
-        <div className="button-row">
-          <button type="button" onClick={handleSaveToken}>保存</button>
-          <button type="button" onClick={() => void handleTestConnection()} disabled={testing || token.trim() === ""}>
-            {testing ? "確認中…" : "接続テスト"}
-          </button>
-        </div>
-        {tokenMessage && <p className="notice">{tokenMessage}</p>}
-      </div>
-
       <h2>学習</h2>
       <div className="settings-group">
         <span className="sheet-label">1日に出す新規カード</span>
@@ -321,10 +296,10 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
         </div>
         <p className="muted">
           {newCardsPerDay === 0
-            ? "「無制限」を選んでいる間は、この単位の設定は効きません。"
+            ? "「無制限」の間は、この単位の設定は効きません。"
             : newCardsScope === "deck"
-              ? `デッキごとに1日 ${newCardsPerDay} 枚まで。${deckCount !== null ? `いまは ${deckCount} デッキあるので、全部開くと最大 ${newCardsPerDay * deckCount} 枚入ります。` : ""}新規は数日かけて復習が返ってくるので、毎日の復習が増えすぎるときは「全デッキ合計」にしてください。`
-              : `全デッキ合わせて1日 ${newCardsPerDay} 枚まで。先に開いたデッキから枠を使います。`}
+              ? `デッキごとに1日 ${newCardsPerDay} 枚${deckCount !== null ? `（${deckCount} デッキで最大 ${newCardsPerDay * deckCount} 枚）` : ""}。`
+              : `全デッキ合わせて1日 ${newCardsPerDay} 枚。`}
         </p>
         <span className="sheet-label">早押しの表示速度</span>
         <div className="segmented">
@@ -335,9 +310,6 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
           ))}
         </div>
         <span className="sheet-label">右スワイプの評価に使う秒数</span>
-        <p className="muted">
-          問題が表示されてからスワイプするまでの時間で評価が決まります（答えを見ている時間も含みます）。この秒数より速ければその評価になります。
-        </p>
         <div className="threshold-row">
           {([
             { key: "easy", label: "簡単" },
@@ -358,23 +330,53 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
             </label>
           ))}
         </div>
-        <p className="muted">「難しい」の秒数を超えると「もう一度」になります。</p>
+        <p className="muted">問題が出てからスワイプするまでの秒数で決まります。「難しい」を超えると「もう一度」です。</p>
+        <details className="settings-help">
+          <summary>説明を見る</summary>
+          <p>新規は数日かけて復習が返ってくるので、毎日の復習が増えすぎるときは単位を「全デッキ合計」にしてください。全デッキ合計では、先に開いたデッキから枠を使います。</p>
+          <p>スワイプの秒数には答えを見ている時間も含みます。その秒数より速ければその評価になります。</p>
+        </details>
       </div>
 
-      <h2>学習進捗のバックアップ</h2>
-      <p className="muted">
-        進捗はこの端末にのみ保存されます（ストレージ永続化: {usage === null ? "不明" : usage.persisted ? "有効" : "無効"}）。
-        端末やブラウザのデータ削除に備えて、定期的に書き出してください。
-        最終バックアップ: {lastBackupAt !== null ? formatTimestamp(lastBackupAt) : "未実施"}
-      </p>
-      {usage !== null && (
-        <p className="muted">
-          保存容量: {formatBytes(usage.usedBytes)}
-          {usage.quotaBytes > 0 && ` / ${formatBytes(usage.quotaBytes)}`}
-          （デッキのキャッシュと学習進捗の合計）
-        </p>
-      )}
+      <h2>表示と動作</h2>
       <div className="settings-group">
+        <span className="sheet-label">Google 検索を開くブラウザ</span>
+        <div className="segmented">
+          {SEARCH_BROWSERS.map((browser) => (
+            <button
+              key={browser.id}
+              type="button"
+              aria-pressed={searchBrowser === browser.id}
+              onClick={() => handleSearchBrowserChange(browser.id)}
+            >
+              {browser.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted">iPhone のホーム画面から起動したときに効きます。</p>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={crossfade} onChange={(event) => handleMotionChange(event.target.checked)} />
+          動きを減らす（カードの反転・移動をクロスフェードにする）
+        </label>
+        <details className="settings-help">
+          <summary>説明を見る</summary>
+          <p>ホーム画面版では検索がアプリ内のブラウザで開くので、いつものブラウザで見たいときにそのブラウザを選んでください。ブラウザで使っているときは新しいタブで開きます。</p>
+          <p>「動きを減らす」は OS の「視差効果を減らす」設定に関係なく、この設定だけで切り替わります。</p>
+        </details>
+      </div>
+
+      <h2>バックアップ</h2>
+      <div className="settings-group">
+        <p className="muted">
+          この端末に書き出し: {lastBackupAt !== null ? formatTimestamp(lastBackupAt) : "未実施"}
+          {usage !== null && (
+            <>
+              ・保存容量 {formatBytes(usage.usedBytes)}
+              {usage.quotaBytes > 0 && ` / ${formatBytes(usage.quotaBytes)}`}
+              ・永続化 {usage.persisted ? "有効" : "無効"}
+            </>
+          )}
+        </p>
         <div className="button-row">
           <button type="button" onClick={() => void handleExport()}>JSONを書き出す</button>
           <button type="button" onClick={() => fileInputRef.current?.click()}>JSONを取り込む</button>
@@ -391,19 +393,12 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
           }}
         />
         {backupMessage && <p className="notice">{backupMessage}</p>}
-      </div>
-
-      <h2>GitHub へのバックアップ（{OWNER}/{BACKUP_REPOSITORY}）</h2>
-      <p className="muted">
-        非公開リポジトリの {BACKUP_PATH} に gzip で保存します。上のトークンに、このリポジトリも追加してください（Contents: Read and write）。
-        GitHub への最終保存: {lastCloudBackupAt !== null ? formatTimestamp(lastCloudBackupAt) : "未実施"}
-      </p>
-      {cloudError && (
-        <p className="notice warning">
-          自動保存に失敗（{formatTimestamp(cloudError.at)}）: {cloudError.message}
-        </p>
-      )}
-      <div className="settings-group">
+        <p className="muted">GitHub へ保存: {lastCloudBackupAt !== null ? formatTimestamp(lastCloudBackupAt) : "未実施"}</p>
+        {cloudError && (
+          <p className="notice warning">
+            自動保存に失敗（{formatTimestamp(cloudError.at)}）: {cloudError.message}
+          </p>
+        )}
         <label className="checkbox-label">
           <input type="checkbox" checked={autoCloud} onChange={(event) => handleAutoCloudChange(event.target.checked)} />
           学習を終えたとき自動で保存する（1日1回）
@@ -436,37 +431,42 @@ export function SettingsView({ snapshot }: SettingsViewProps) {
             </p>
           </>
         )}
-        {token.trim() === "" && <p className="muted">トークンを登録すると使えます。</p>}
+        {token.trim() === "" && <p className="muted">GitHub への保存はトークンを登録すると使えます。</p>}
         {cloudMessage && <p className="notice">{cloudMessage}</p>}
+        <details className="settings-help">
+          <summary>説明を見る</summary>
+          <p>進捗はこの端末にのみ保存されます。端末やブラウザのデータ削除に備えて、定期的に書き出してください。</p>
+          <p>
+            GitHub へは非公開リポジトリ {OWNER}/{BACKUP_REPOSITORY} の {BACKUP_PATH} に gzip で保存します。トークンにこのリポジトリも追加してください（Contents: Read and write）。
+          </p>
+        </details>
       </div>
 
-      <h2>答えの検索</h2>
+      <h2>GitHub トークン</h2>
       <div className="settings-group">
-        <span className="sheet-label">Google 検索を開くブラウザ</span>
-        <div className="segmented">
-          {SEARCH_BROWSERS.map((browser) => (
-            <button
-              key={browser.id}
-              type="button"
-              aria-pressed={searchBrowser === browser.id}
-              onClick={() => handleSearchBrowserChange(browser.id)}
-            >
-              {browser.label}
-            </button>
-          ))}
-        </div>
-        <p className="muted">
-          iPhone のホーム画面から起動したときに効きます。ホーム画面版では検索がアプリ内のブラウザで開くので、いつものブラウザで見たいときに選んでください。ブラウザで使っているときは新しいタブで開きます。
-        </p>
-      </div>
-
-      <h2>アニメーション</h2>
-      <div className="settings-group">
+        <p className="muted">カードの編集と GitHub へのバックアップに使います。学習だけなら不要です。</p>
+        <input
+          type="password"
+          value={token}
+          onChange={(event) => setToken(event.target.value)}
+          placeholder="github_pat_..."
+          autoComplete="off"
+        />
         <label className="checkbox-label">
-          <input type="checkbox" checked={crossfade} onChange={(event) => handleMotionChange(event.target.checked)} />
-          動きを減らす（カードの反転・移動をクロスフェードにする）
+          <input type="checkbox" checked={persistToken} onChange={(event) => setPersistToken(event.target.checked)} />
+          この端末に保存する（オフはセッション限定）
         </label>
-        <p className="muted">OS の「視差効果を減らす」設定に関係なく、この設定だけで切り替わります。</p>
+        <div className="button-row">
+          <button type="button" onClick={handleSaveToken}>保存</button>
+          <button type="button" onClick={() => void handleTestConnection()} disabled={testing || token.trim() === ""}>
+            {testing ? "確認中…" : "接続テスト"}
+          </button>
+        </div>
+        {tokenMessage && <p className="notice">{tokenMessage}</p>}
+        <details className="settings-help">
+          <summary>説明を見る</summary>
+          <p>fine-grained PAT で、このリポジトリと {OWNER}/{BACKUP_REPOSITORY} の Contents: Read and write を許可したものが必要です。</p>
+        </details>
       </div>
 
       <h2>メンテナンス</h2>
