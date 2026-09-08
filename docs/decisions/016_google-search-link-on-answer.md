@@ -65,3 +65,9 @@
 - 却下: UA からブラウザを推定 — standalone の UA は Safari 相当で、既定ブラウザの情報は無い
 - 兆候: Vivaldi 側がスキームを変えると開かなくなる（iOS は未登録スキームを無視する）。そのときは Safari か Chrome に切り替えて使える
 - 検証: `tests/text.test.ts`（スキーム差し替え 4 種・standalone 判定）、`tests/study-view.test.tsx`（standalone＋Vivaldi 設定で `vivaldi://` の href と target なし／standalone でもアプリ内なら https＋新しいタブ）。全 312 件通過。preview＋headless Chromium で `navigator.standalone` を真にして、設定で Vivaldi を選ぶと href が `vivaldi://www.google.com/search?...&noiga=1` になることを確認。実機（Vivaldi が開くか）は未検証
+
+### 2026-09-08 追記: 次のカードへ飛ばしている間も、隣のボタンと同じ瞬間に非活性にする
+
+- ユーザー報告: 「次のカードに切り替わるとき、Google の非活性になるタイミングが隣とズレる」
+- 原因: 隣（編集・メモ・非表示）は評価の瞬間に `saving` で非活性になるが、Google は `revealed` だけを見ていた。`revealed` が偽になるのは飛ばしのアニメーション（`FLY_OUT_MS`）が終わってキューを進めた後なので、その間だけ Google が活性のまま残っていた
+- 対応: `disabled={!revealed || saving}`。headless Chromium で評価直後から 30ms ごとに両者を記録し、評価の瞬間から同時に非活性になることを確認（その後メモが先に活性へ戻るのは、次のカードの答えが未表示だから。仕様どおり）

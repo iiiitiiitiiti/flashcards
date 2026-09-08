@@ -816,7 +816,8 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
         <UndoIcon />
       </button>
       <span className="card-actions-right">
-      <SearchAction query={current.card.back} disabled={!revealed} browser={searchBrowser} />
+      {/* 評価して次へ飛ばしている間（saving）も隣と同じ瞬間に非活性にする。答えが消えるのは飛び切った後なので revealed だけでは遅れる */}
+      <SearchAction query={current.card.back} disabled={!revealed || saving} browser={searchBrowser} />
       {canEditCards && (
         <button
           type="button"
