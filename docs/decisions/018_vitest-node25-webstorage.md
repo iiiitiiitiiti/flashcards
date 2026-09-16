@@ -3,6 +3,11 @@
 - 日付: 2026-09-08
 - 対象: `vite.config.ts`（`test.execArgv`）、`tests/settings-view.test.tsx`・`tests/study-view.test.tsx` など `localStorage` を直接使うテスト
 
+### 決定
+
+`vite.config.ts` の `test.execArgv` に `--no-experimental-webstorage` を入れ、vitest の worker を起動する Node から
+native の localStorage を外す。以後、テストは jsdom の `localStorage` を素直に使ってよい。
+
 ### 背景
 
 Mac（Node 25.9）で `npm test` を回すと、Windows で書かれた `settings-view` 3 件と `study-view` 1 件が
@@ -11,17 +16,15 @@ Mac（Node 25.9）で `npm test` を回すと、Windows で書かれた `setting
 jsdom の `localStorage` がそれに隠れる。2026-08-27 の設計メモではこの理由で「テストから `localStorage.clear()` を呼ばない」と
 回避していたが、その後 Windows 側で書かれたテストが直接使っており、OS ごとに結果が違う状態になっていた。
 
-### 決定
-
-`vite.config.ts` の `test.execArgv` に `--no-experimental-webstorage` を入れ、vitest の worker を起動する Node から
-native の localStorage を外す。以後、テストは jsdom の `localStorage` を素直に使ってよい。
-
 ### 比較した代替案
 
-- 却下: `.nvmrc` などで Node を 24 以下に固定する — Mac の Node を下げる理由がこれだけで、他のプロジェクトにも波及する。テストの都合で開発環境を縛るのは逆向き
-- 却下: setup ファイルで `delete globalThis.localStorage` してから jsdom を当てる — Node の getter は configurable でない可能性があり、jsdom 環境の初期化順にも依存する。フラグ 1 つで済むところを増やす理由がない
-- 却下: テストで `localStorage` を使わずに `storage.ts` の関数経由に書き換える（2026-08-27 の回避を徹底する） — 設定の保存先が localStorage であること自体を確かめたいテストには使えない。回避の継続であって解決ではない
-- 採用: `test.execArgv: ["--no-experimental-webstorage"]`
+| 案 | 却下理由 |
+|---|---|
+| `.nvmrc` などで Node を 24 以下に固定する | Mac の Node を下げる理由がこれだけで、他のプロジェクトにも波及する。テストの都合で開発環境を縛るのは逆向き |
+| setup ファイルで `delete globalThis.localStorage` してから jsdom を当てる | Node の getter は configurable でない可能性があり、jsdom 環境の初期化順にも依存する。フラグ 1 つで済むところを増やす理由がない |
+| テストで `localStorage` を使わずに `storage.ts` の関数経由に書き換える（2026-08-27 の回避を徹底する） | 設定の保存先が localStorage であること自体を確かめたいテストには使えない。回避の継続であって解決ではない |
+
+採用: `test.execArgv: ["--no-experimental-webstorage"]`
 
 ### 影響範囲
 

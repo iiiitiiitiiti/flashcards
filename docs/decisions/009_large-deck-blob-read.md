@@ -3,12 +3,6 @@
 - 日付: 2026-09-04
 - 対象: `src/github.ts`（`getDeckContents` / `fetchBlob`）、`src/deckedit.ts`（`MAX_WRITABLE_DECK_BYTES`）
 
-### 背景
-
-公民・理系・生活の3デッキは JSON が 1MB を超え、アプリからカードの追加・編集・移動ができなかった。
-原因は Contents API の GET が 1MB 超のファイルで本文を返さないこと（`encoding: "none"`・`content: ""`。sha は返る）。
-`writeDeck` は「最新本文を取る → 変更を当てる → sha 付きで PUT」なので、本文が取れない時点で止まっていた。
-
 ### 決定
 
 - 本文が返らなかったときだけ **Blob API**（`GET /git/blobs/{sha}`、100MB まで）で本文を取る。PUT は従来どおり Contents API
@@ -18,15 +12,21 @@
   - `git/blobs/{sha}` → `encoding: "base64"`、本文 1,564,097 文字（改行入り）
 - アプリ側の上限 `MAX_WRITABLE_DECK_BYTES` を 1MB → 100MB（Contents API 自体の対象外になる境界）へ。移動先の候補から3デッキが外れなくなる
 
+### 背景
+
+公民・理系・生活の3デッキは JSON が 1MB を超え、アプリからカードの追加・編集・移動ができなかった。
+原因は Contents API の GET が 1MB 超のファイルで本文を返さないこと（`encoding: "none"`・`content: ""`。sha は返る）。
+`writeDeck` は「最新本文を取る → 変更を当てる → sha 付きで PUT」なので、本文が取れない時点で止まっていた。
+
 ### 比較した代替案
 
-- 却下: Git Data API へ全面移行（blob → tree → commit → ref） — 移動を1コミットで原子的にできる利点はあるが、
-  `writeDeck` / `createDeck` / `deleteDeck` と 409 リトライ・テスト一式を書き直すことになる。今回の障害は「読み」だけなので釣り合わない。
-  移動の途中失敗は「両方にある」状態で止まり、次の `decks:sync` が add として拾う設計が既にある（`008`）
-- 却下: raw URL（`raw.githubusercontent.com/.../{branch}/...`）で本文を取る — ブランチ指定の raw は CDN のキャッシュで数分古いことがある。
-  取った本文と Contents API の sha が食い違うと、古い本文に変更を当てて PUT してしまう。sha に紐づく Blob API なら必ず一致する
-- 却下: 3デッキを分割して 1MB 以下にする — デッキ id は進捗の鍵なので、分割は全カードの進捗を捨てることになる
-- 採用: 上記の決定
+| 案 | 却下理由 |
+|---|---|
+| Git Data API へ全面移行（blob → tree → commit → ref） | 移動を1コミットで原子的にできる利点はあるが、`writeDeck` / `createDeck` / `deleteDeck` と 409 リトライ・テスト一式を書き直すことになる。今回の障害は「読み」だけなので釣り合わない。移動の途中失敗は「両方にある」状態で止まり、次の `decks:sync` が add として拾う設計が既にある（`008`） |
+| raw URL（`raw.githubusercontent.com/.../{branch}/...`）で本文を取る | ブランチ指定の raw は CDN のキャッシュで数分古いことがある。取った本文と Contents API の sha が食い違うと、古い本文に変更を当てて PUT してしまう。sha に紐づく Blob API なら必ず一致する |
+| 3デッキを分割して 1MB 以下にする | デッキ id は進捗の鍵なので、分割は全カードの進捗を捨てることになる |
+
+採用: 上記の決定
 
 ### 影響範囲
 
