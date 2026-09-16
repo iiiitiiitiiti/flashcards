@@ -4,11 +4,6 @@
 - 対象: `src/cloudbackup.ts`（新規）、`src/github.ts`（`readRepoFile` / `statRepoFile` / `putRepoFile` / `listFileCommits`、`testConnection` の repository 引数）。
   ほかに `src/backup.ts`（1トランザクション化・`gzipBlob` / `parseBackupBytes`）、`src/storage.ts`（4キー）、`src/App.tsx`（学習終了後の自動送信）、`src/SettingsView.tsx`
 
-### 背景
-
-学習進捗（cardProgress / reviewLog / cardNotes / hiddenCards）は iPhone の IndexedDB にしか無く、端末が壊れると3万問分の記録が消える。
-手動の JSON 書き出しはあったが、忘れると意味がない。ユーザーは「新規の private リポへ保存・学習終了時に1日1回」を選んだ。
-
 ### 決定
 
 1. 保存先は **`iiiitiiitiiti/flashcards-progress`（private）** の `backups/latest.json.gz` 1本を上書きする。過去版は git 履歴が持つ。
@@ -28,16 +23,23 @@
 9. 接続テストはバックアップ用リポについて **「届くか」だけ**を出す（`GET /repos/...` の 200 / 404）。`permissions.push` が fine-grained PAT の
    Contents 権限を映す保証が無いので、書き込みは「今すぐ GitHub へ保存」で確かめる。404 は「PAT のリポジトリ一覧に追加」、403 は「Contents を Read and write に」と直し方を書く
 
+### 背景
+
+学習進捗（cardProgress / reviewLog / cardNotes / hiddenCards）は iPhone の IndexedDB にしか無く、端末が壊れると3万問分の記録が消える。
+手動の JSON 書き出しはあったが、忘れると意味がない。ユーザーは「新規の private リポへ保存・学習終了時に1日1回」を選んだ。
+
 ### 比較した代替案
 
-- 却下: flashcards リポ（public）の別ブランチに置く — PAT 変更が不要だが、学習履歴とカードのメモが公開される。ユーザーが private を選択
-- 却下: 素の JSON で送る（v1 案） — 復元の形式が手動書き出しと揃う利点はあるが、10MB 級の base64 を iPhone で組み立てることになる。
-  Contents API の PUT は 5MB で成功を確認したが、それ以上は未確認。gzip なら 1〜2MB 級に収まり、`parseBackupBytes` で形式の違いも吸収できる
-- 却下: 端末 id ごとのファイル — 端末は1台。復元で「どのファイルか」を選ぶ UI が要る。版選択の復元があれば、2端末が上書きし合っても履歴から戻せる
-- 却下: `previous.json` を1世代だけ持つ — 旧本文を読み戻してもう1回 PUT する（転送が倍）。履歴からの版選択の方が安く、何世代でも戻れる
-- 却下: 自動送信の既定を無効にし、接続テスト成功で有効化を促す — PAT を直すまで 6 時間おきに1行出るだけなので、既定有効で「気づける」方を取った
-- 却下: Git Data API で送る — 読みも書きも Contents API で足りる（`009` と同じ判断）
-- 採用: 上記の決定
+| 案 | 却下理由 |
+|---|---|
+| flashcards リポ（public）の別ブランチに置く | PAT 変更が不要だが、学習履歴とカードのメモが公開される。ユーザーが private を選択 |
+| 素の JSON で送る（v1 案） | 復元の形式が手動書き出しと揃う利点はあるが、10MB 級の base64 を iPhone で組み立てることになる。Contents API の PUT は 5MB で成功を確認したが、それ以上は未確認。gzip なら 1〜2MB 級に収まり、`parseBackupBytes` で形式の違いも吸収できる |
+| 端末 id ごとのファイル | 端末は1台。復元で「どのファイルか」を選ぶ UI が要る。版選択の復元があれば、2端末が上書きし合っても履歴から戻せる |
+| `previous.json` を1世代だけ持つ | 旧本文を読み戻してもう1回 PUT する（転送が倍）。履歴からの版選択の方が安く、何世代でも戻れる |
+| 自動送信の既定を無効にし、接続テスト成功で有効化を促す | PAT を直すまで 6 時間おきに1行出るだけなので、既定有効で「気づける」方を取った |
+| Git Data API で送る | 読みも書きも Contents API で足りる（`009` と同じ判断） |
+
+採用: 上記の決定
 
 ### 影響範囲
 
