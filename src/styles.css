@@ -1604,6 +1604,11 @@ textarea {
   font-weight: 700;
 }
 
+.result-retry {
+  min-height: 46px;
+  font-weight: 700;
+}
+
 .result-error {
   margin: 8px 16px 0;
 }

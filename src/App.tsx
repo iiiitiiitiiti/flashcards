@@ -87,6 +87,8 @@ type View =
       focus: StudyFocus;
       /** 苦手ドリルを開いた時刻。「つづける」で引き継ぎ、それ以降に評価したカードを出さない */
       weakSince: number | null;
+      /** 間違えたカードのやり直しなら、そのカード（`progressKey`）。「つづける」では引き継がない */
+      retryKeys: string[] | null;
       notes: Map<string, string>;
       sessionId: number;
     }
@@ -522,6 +524,8 @@ export function App() {
     weakSince: number | null,
     /** 開始シートで既に読んだ進捗。あれば読み直さない（全デッキぶんを2回読まない） */
     preloaded: ProgressRecord[] | null = null,
+    /** 間違えたカードのやり直し。指定するとこのカードだけを出す */
+    retryKeys: string[] | null = null,
   ) {
     // 次回の既定値として選択を覚えておく（タグだけはデッキごとに覚える。まとめて学習では覚えない）
     saveStudyMode(mode);
@@ -536,7 +540,7 @@ export function App() {
     const deckIds = all ? (snapshot?.decks.map((entry) => entry.deckId) ?? []) : [deckId];
     setUsedNewCardsToday(used);
     setSessionId((id) => id + 1);
-    setView({ type: "study", deckIds, progress, mode, sessionSize, order, tag, focus, weakSince, notes, sessionId: sessionId + 1 });
+    setView({ type: "study", deckIds, progress, mode, sessionSize, order, tag, focus, weakSince, retryKeys, notes, sessionId: sessionId + 1 });
   }
 
   /** 学習開始シートを開く。タグの初期値は前回の選択（デッキに無いタグなら「全タグ」）。まとめて学習は常に「全タグ」 */
@@ -570,7 +574,7 @@ export function App() {
 
   function closeStudy(restart: boolean) {
     if (restart && view.type === "study") {
-      // 同じ設定のまま、最新の進捗でセッションを組み直す
+      // 同じ設定のまま、最新の進捗でセッションを組み直す（やり直しのあとでも、通常のセッションへ戻す）
       void startStudy(view.deckIds.length > 1 ? ALL_DECKS : view.deckIds[0], view.mode, view.sessionSize, view.order, view.tag, view.focus, view.weakSince);
       return;
     }
@@ -720,6 +724,11 @@ export function App() {
               });
             }}
             onClose={closeStudy}
+            retryKeys={view.retryKeys}
+            onRetryMissed={(keys) => {
+              // 進捗は読み直す（直前の評価を反映した状態で出すため）
+              void startStudy(view.deckIds.length > 1 ? ALL_DECKS : view.deckIds[0], view.mode, view.sessionSize, view.order, view.tag, view.focus, view.weakSince, null, keys);
+            }}
           />
         </main>
       );

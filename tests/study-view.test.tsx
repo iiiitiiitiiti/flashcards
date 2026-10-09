@@ -718,3 +718,66 @@ describe("デッキをまたぐ学習（decks が2つ以上）", () => {
     expect(screen.getByText(/全デッキで今日出せるカードは終わりました/)).toBeTruthy();
   });
 });
+
+describe("間違えたカードだけもう一度", () => {
+  /** 早押しで1枚ぶん答える（通常学習の2択には「もう一度」のボタンが無いため、不正解は早押しで出す） */
+  async function answerBuzzer(rating: "正解" | "不正解", last = false) {
+    await waitFor(() => expect(screen.getByLabelText("押す")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("押す"));
+    fireEvent.click(screen.getByText("答えを表示"));
+    fireEvent.click(screen.getByText(rating));
+    // 最後の1枚は結果画面へ移り、カードの取り消しボタンが無くなる
+    if (!last) await waitUntilUndoReady();
+  }
+
+  it("やり切った結果画面に、不正解にしたカードの枚数でボタンが出て、最初に間違えた順で親へ渡す", async () => {
+    const onRetryMissed = vi.fn();
+    renderStudy({ mode: "buzzer", onRetryMissed });
+    await answerBuzzer("不正解"); // 001
+    await answerBuzzer("正解"); // 002
+    await answerBuzzer("不正解"); // 003
+    await answerBuzzer("正解"); // 001 の再出題
+    await answerBuzzer("不正解"); // 003 の再出題（同じカードは1枚と数える）
+    await answerBuzzer("正解", true); // 003 の再々出題
+
+    const retry = await screen.findByText("不正解の 2 枚をもう一度");
+    fireEvent.click(retry);
+    expect(onRetryMissed).toHaveBeenCalledWith([progressKey("deck1", "001"), progressKey("deck1", "003")]);
+  });
+
+  it("中断した結果画面にも出て、取り消した不正解は数えない", async () => {
+    renderStudy({ mode: "buzzer", onRetryMissed: () => {} });
+    await answerBuzzer("不正解");
+    fireEvent.click(screen.getByLabelText("学習を中断して結果を見る"));
+    expect(await screen.findByText("残りをやめて、不正解の 1 枚をもう一度")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("直前の評価を取り消す"));
+    await waitFor(async () => expect(await readAllProgress()).toHaveLength(0));
+    fireEvent.click(screen.getByLabelText("学習を中断して結果を見る"));
+    await screen.findByText("終了する");
+    expect(screen.queryByText(/枚をもう一度/)).toBeNull();
+  });
+
+  it("retryKeys を渡すと、枚数・期限に関係なくそのカードだけを並び順に出し、見つからないカードは飛ばす", async () => {
+    const { container } = renderStudy({
+      sessionSize: 1,
+      retryKeys: [progressKey("deck1", "003"), progressKey("deck1", "消えたカード"), progressKey("deck1", "001")],
+      onRetryMissed: () => {},
+    });
+    expect(container.querySelector(".study-front")?.textContent).toBe("イタリアの首都は");
+    expect(remainingText()).toContain("残り 2 枚");
+    reveal(container);
+    fireEvent.click(screen.getByText("わかった"));
+    await waitFor(() => expect(container.querySelector(".study-front")?.textContent).toBe("日本の首都は"));
+    reveal(container);
+    fireEvent.click(screen.getByText("わかった"));
+
+    await screen.findByText("終了する");
+    expect(screen.queryByText(/枚をもう一度/)).toBeNull();
+  });
+
+  it("retryKeys のカードが1枚も見つからなければ、やり直し用の空メッセージを出す", () => {
+    renderStudy({ retryKeys: [progressKey("deck1", "消えたカード")] });
+    expect(screen.getByText("もう一度出せるカードはありません")).toBeTruthy();
+  });
+});

@@ -42,6 +42,10 @@ interface StudyResultProps {
   scopeLabel?: string;
   onContinue: () => void;
   onFinish: () => void;
+  /** このセッションで「もう一度」（早押しは「不正解」）を付けたカードの枚数。0 ならやり直しのボタンを出さない */
+  missedCount?: number;
+  /** 間違えたカードだけで新しいセッションを始める */
+  onRetryMissed?: () => void;
 }
 
 const RATING_LABELS: Record<ReviewRating, string> = {
@@ -140,7 +144,7 @@ function Gauge({ percent }: { percent: number }) {
   );
 }
 
-export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, busy, tag, focus = "all", scopeLabel = "このデッキ", onUndo, onContinue, onFinish }: StudyResultProps) {
+export function StudyResult({ mode, entries, percent, phaseGain, reason, canContinue, canUndo, busy, tag, focus = "all", scopeLabel = "このデッキ", onUndo, onContinue, onFinish, missedCount = 0, onRetryMissed }: StudyResultProps) {
   const labels = mode === "buzzer" ? BUZZER_RATING_LABELS : RATING_LABELS;
 
   return (
@@ -160,6 +164,13 @@ export function StudyResult({ mode, entries, percent, phaseGain, reason, canCont
           {canContinue && (
             <button type="button" className="primary result-continue" disabled={busy} onClick={onContinue}>
               つづける
+            </button>
+          )}
+          {missedCount > 0 && onRetryMissed && (
+            // 中断から押すと残りのキューは出さずに終わるので、文言でそれが分かるようにする
+            <button type="button" className={`${canContinue ? "" : "primary "}result-retry`} disabled={busy} onClick={onRetryMissed}>
+              {reason === "interrupted" ? "残りをやめて、" : ""}
+              {mode === "buzzer" ? "不正解の" : "間違えた"} {missedCount} 枚をもう一度
             </button>
           )}
           <button type="button" className="result-finish" disabled={busy} onClick={onFinish}>

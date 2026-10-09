@@ -45,6 +45,13 @@ interface StudyViewProps {
   moveTargetsFor?: (deckId: string) => Deck[];
   /** 学習を終える。restart が true なら同じ設定でもう一度始める */
   onClose: (restart: boolean) => void;
+  /**
+   * 間違えたカードのやり直し。指定すると期限・枚数・範囲・タグを見ず、このカード（`progressKey` の並び順）だけを出す。
+   * 非表示・移動・削除で見つからないカードは飛ばす
+   */
+  retryKeys?: string[] | null;
+  /** 結果画面の「間違えたカードをもう一度」。このセッションで「もう一度」を付けたカードを、最初に間違えた順で渡す */
+  onRetryMissed?: (keys: string[]) => void;
 }
 
 /** メモのアイコン（書類＋ペン）。色はボタンの文字色に従う */
@@ -180,11 +187,24 @@ const BUZZER_BUTTONS: { rating: ReviewRating; label: string; className: string }
   { rating: 3, label: "正解", className: "rate-good" },
 ];
 
-export function StudyView({ decks, title, initialProgress, mode, sessionSize, order, tag, focus = "all", weakSince = null, usedNewCardsToday, initialNotes, canEditCards, onHide, onDeckUpdated, onClose, moveTargetsFor = () => [] }: StudyViewProps) {
+export function StudyView({ decks, title, initialProgress, mode, sessionSize, order, tag, focus = "all", weakSince = null, usedNewCardsToday, initialNotes, canEditCards, onHide, onDeckUpdated, onClose, moveTargetsFor = () => [], retryKeys = null, onRetryMissed }: StudyViewProps) {
   const multiDeck = decks.length > 1;
   /** deckId → Deck。見出し・編集フォーム・デッキ名ラベルで使う */
   const deckOf = (deckId: string): Deck => decks.find((candidate) => candidate.id === deckId) ?? decks[0];
   const initialQueue = useMemo<QueueItem[]>(() => {
+    if (retryKeys !== null) {
+      // やり直しは間違えたカードを全部出す（枚数で切らない）。どれも評価済みなので新規ではない
+      const wanted = new Set(retryKeys);
+      const found = new Map<string, QueueItem>();
+      for (const deck of decks) {
+        for (const card of deck.cards) {
+          const key = progressKey(deck.id, card.id);
+          if (wanted.has(key)) found.set(key, { deckId: deck.id, card, isNew: false });
+        }
+      }
+      const items = retryKeys.flatMap((key) => found.get(key) ?? []);
+      return order === "random" ? shuffled(items) : items;
+    }
     // デッキをまたぐときは新規を出さない（1日の新規上限の数え方が絡む）
     const { items } = buildStudyItems(decks, initialProgress, new Date(), {
       newCardsPerDay: loadNewCardsPerDay(),
@@ -197,7 +217,7 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
     // ランダムはデッキ全体から無作為に選びたいので、枚数で切る前にシャッフルする
     // 選んだ枚数でセッションを打ち切る（「もう一度」の再出題はこの上限に含めない）
     return (order === "random" ? shuffled(items) : items).slice(0, sessionSize);
-  }, [decks, multiDeck, initialProgress, sessionSize, order, tag, focus, weakSince, usedNewCardsToday]);
+  }, [decks, multiDeck, initialProgress, sessionSize, order, tag, focus, weakSince, usedNewCardsToday, retryKeys]);
 
   /** 開始時点でこのデッキが使っていた新規枠。セッション中の増分を差し引くのに使う */
   const introducedAtStart = useMemo(() => countIntroducedToday(initialProgress, new Date()), [initialProgress]);
@@ -259,6 +279,16 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
   }, []);
 
   const current = queue[0];
+
+  /**
+   * このセッションで「もう一度」を付けたカード（最初に間違えた順・重複なし）。
+   * 取り消しの履歴から数えるので、取り消した評価・非表示や移動で外したカードは入らない
+   */
+  const missedKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const entry of undoStack) if (entry.rating === 1) keys.add(keyOf(entry.item));
+    return [...keys];
+  }, [undoStack]);
 
   /**
    * 結果画面に出す定着率と「まだ出せるカードが残っているか」。
@@ -757,7 +787,9 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
         <div className="study-scroll">
           <div className="study-card study-summary-card">
             <p className="summary-emoji" aria-hidden="true">🎉</p>
-            <p className="summary-title">{focus === "weak" ? "苦手カードはありません" : "今日学習するカードはありません"}</p>
+            <p className="summary-title">
+              {retryKeys !== null ? "もう一度出せるカードはありません" : focus === "weak" ? "苦手カードはありません" : "今日学習するカードはありません"}
+            </p>
           </div>
         </div>
         <footer className="study-actions">
@@ -789,6 +821,8 @@ export function StudyView({ decks, title, initialProgress, mode, sessionSize, or
           scopeLabel={multiDeck ? "全デッキ" : "このデッキ"}
           onContinue={() => (result === "interrupted" ? resumeStudy() : onClose(true))}
           onFinish={() => onClose(false)}
+          missedCount={missedKeys.length}
+          onRetryMissed={onRetryMissed && (() => onRetryMissed(missedKeys))}
         />
       </section>
     );
